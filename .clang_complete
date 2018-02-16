@@ -1,0 +1,5 @@
+-DVERSION="0.0.0.1"
+-Wall
+-Wextra
+-std=c++17
+-Wunused-const-variable

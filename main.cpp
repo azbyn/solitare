@@ -33,8 +33,8 @@ using azbyn::string_format;
 #define LEN(x) (sizeof(x) / sizeof(*x))
 
 // clang-format off
-enum Piece { TP_I, TP_L, TP_J, TP_O, TP_S, TP_T, TP_Z, TP_SIZE };
-constexpr const char PieceRotationsStr[TP_SIZE][16 * 4 + 1] = {
+enum Piece { TP_EMPTY = -1, TP_I, TP_L, TP_J, TP_O, TP_S, TP_T, TP_Z, TP_LEN };
+constexpr const char PieceRotationsStr[TP_LEN][16 * 4 + 1] = {
     // I
     "...." "..x." "...." ".x.."
     "xxxx" "..x." "...." ".x.."
@@ -75,7 +75,7 @@ constexpr const char PieceRotationsStr[TP_SIZE][16 * 4 + 1] = {
 void generateTable() {
     return;
     constexpr char indent[] = "    ";
-    for (int p = 0; p < TP_SIZE; ++p) {
+    for (int p = 0; p < TP_LEN; ++p) {
         printf("%s{{{", indent);
         for (int r = 0; r < 4; ++r) {
             if (r != 0) printf("%s {{", indent);
@@ -93,7 +93,7 @@ void generateTable() {
 }
 
 //generated using generateTable
-constexpr std::array<Point, 4> PieceRotations[TP_SIZE][4] = {
+constexpr std::array<Point, 4> PieceRotations[TP_LEN][4] = {
     {{{{0, 2}, {1, 2}, {2, 2}, {3, 2}}},
      {{{2, 3}, {2, 2}, {2, 1}, {2, 0}}},
      {{{0, 1}, {1, 1}, {2, 1}, {3, 1}}},
@@ -150,30 +150,39 @@ constexpr float speed(int level) {
 constexpr int Width = 10;
 constexpr int Height = 20;
 constexpr int MatrixSizeY = 30;
+constexpr int NextPiecesLen = 3;
 
-constexpr int LeftPad = 2;
 
 class RandomGenerator {
-    std::array<Piece, TP_SIZE> pieces = {};
+    std::array<Piece, TP_LEN> bags[2] = {};
+    int bagIndex = 0;
     std::random_device rd;
     std::mt19937 gen;
-    int i = 0;
+    int index = 0;
 
 public:
     RandomGenerator() : rd(), gen(rd()) {
-        for (int i = 0; i < TP_SIZE; ++i) {
-            pieces[i] = (Piece)i;
+        for (int i = 0; i < TP_LEN; ++i) {
+            bags[0][i] = (Piece)i;
+            bags[1][i] = (Piece)i;
         }
-        std::shuffle(pieces.begin(), pieces.end(), gen);
+        std::shuffle(bags[0].begin(), bags[0].end(), gen);
+        std::shuffle(bags[1].begin(), bags[1].end(), gen);
     }
 
     Piece operator()() {
-        //return TP_I;
-        if (i >= TP_SIZE) {
-            std::shuffle(pieces.begin(), pieces.end(), gen);
-            i = 0;
+        if (index >= TP_LEN) {
+            std::shuffle(bags[bagIndex].begin(), bags[bagIndex].end(), gen);
+            bagIndex = !bagIndex;
+            index = 0;
         }
-        return pieces[i++];
+        return bags[bagIndex][index++];
+    }
+    Piece NextPiece(int i) const {
+        int ix = index + i;
+        if (ix >= TP_LEN - 1)
+            return bags[!bagIndex][ix - TP_LEN];
+        return bags[bagIndex][ix];
     }
 
 } randgen;
@@ -202,6 +211,9 @@ class Game {
     }
 
 public:
+    void IncreaseScore(int x) {
+        score += x;
+    }
     void Init(void (*drawPause) (void)) {
         this->drawPause = drawPause;
     }
@@ -224,15 +236,23 @@ public:
     bool Running() const { return running; }
     void CheckClearLines() {
         unsigned y = 0;
+        int clearedLines = 0;
         while (y < MatrixSizeY) {
             for (unsigned x = 0; x < Width; ++x) {
                 if (!Matrix(x, y))
                     goto nextLine;
             }
             ClearLine(y);
+            ++clearedLines;
             continue;//redo line
         nextLine:
             ++y;
+        }
+        switch (clearedLines) {
+        case 1: IncreaseScore(Level() * 40); break;
+        case 2: IncreaseScore(Level() * 100); break;
+        case 3: IncreaseScore(Level() * 300); break;
+        case 4: IncreaseScore(Level() * 1200); break;
         }
     }
 
@@ -245,10 +265,13 @@ class Player {
     int rotation;
     Piece piece;
     std::chrono::time_point<std::chrono::system_clock> lastDrop;
+    Piece holdPiece = TP_EMPTY;
+    bool lastWasHold = true;
 
 
     void Reset(Piece p) {
-        pos = Point(3, 18);
+        if (p == TP_I && game.Matrix(4, Height - 1)) game.End();
+        pos = Point(3, Height - 3);
         rotation = 0;
         piece = p;
         UpdatePoints();
@@ -256,7 +279,6 @@ class Player {
             if (game.Matrix(pt) && pt.y >= Height) {
                 game.End();
                 return;
-                
             }/*
             if (game.Matrix(pt)) {
                 for (auto p : points) {
@@ -288,46 +310,21 @@ public:
     constexpr Piece GetPiece() const {
         return piece;
     }
-    void Input() {
-        int c = getch();
-        switch (c) {
-        // case ERR: continue;
-        case KEY_BACKSPACE:
-        case 'q':
-        case 27:
-        case KEY_F(1):
-            game.End();
-        break;
-        case 'z':
-        case 'a':
-            RotateLeft();
-            break;
-        case KEY_UP:
-        case 's':
-        case 'x':
-            RotateRight();
-            break;
-        case 'c':
-        case 'd':
-            //hold
-            break;
-        case 'p':
-            game.Pause();
-            break;
-        case ' ':
-            HardDrop();
-            break;
-        case KEY_DOWN:
-            Fall();
-            ResetDrop();
-            break;
-        case KEY_LEFT:
-            Move(-1);
-            break;
-        case KEY_RIGHT:
-            Move(1);
-            break;
+    constexpr Piece GetHoldPiece() const {
+        return holdPiece;
+    }
+    void Hold() {
+        if (holdPiece == TP_EMPTY) {
+            holdPiece = piece;
+            Reset(randgen());
         }
+        else if (!lastWasHold) {
+            Piece tmp = piece;
+            Reset(holdPiece);
+            holdPiece = tmp;
+        }
+        lastWasHold = true;
+
     }
 
     void Move(int x) {
@@ -354,7 +351,13 @@ public:
             }
         }
     }
+    void SoftDrop() {
+        game.IncreaseScore(1);
+        ResetDrop();
+        Fall();
+    }
     void HardDrop() {
+        //if (pos.y == Height - 2) return;
         for (;;) {
             --pos.y;
             UpdatePoints();
@@ -366,17 +369,10 @@ public:
                     return;
                 }
             }
+            game.IncreaseScore(1);
         }
     }
-
-    void RotateRight() {
-        RotateBase(1);
-    }
-    void RotateLeft() {
-        RotateBase(-1);
-    }
-private:
-    void RotateBase(int i) {
+    void Rotate(int i) {
         auto tmprot = rotation;
         rotation += i;
         if (rotation < 0)
@@ -408,6 +404,7 @@ private:
         rotation = tmprot;
         UpdatePoints();
     }
+private:
     bool CheckRotation() {
         UpdatePoints();
         for (auto pt : points) {
@@ -416,9 +413,49 @@ private:
             }
         }
         return true;
-
     }
 public:
+    void Input() {
+        int c = getch();
+        switch (c) {
+            // case ERR: continue;
+        case KEY_BACKSPACE:
+        case 'q':
+        case 27:
+        case KEY_F(1):
+            game.End();
+        break;
+        case 'z':
+        case 'a':
+            Rotate(-1);
+            break;
+        case KEY_UP:
+        case 's':
+        case 'x':
+            Rotate(1);
+            break;
+        case 'c':
+        case 'd':
+            Hold();
+            break;
+        case 'p':
+            game.Pause();
+            break;
+        case ' ':
+            HardDrop();
+            break;
+        case KEY_DOWN:
+            SoftDrop();
+            break;
+        case KEY_LEFT:
+            Move(-1);
+            break;
+        case KEY_RIGHT:
+            Move(1);
+            break;
+        }
+    }
+
     void PlaceOnBoard(Piece pc) {
         for (auto pt : points) {
             /*if (pt.y >= Height) {
@@ -428,6 +465,7 @@ public:
         }
         game.CheckClearLines();
         Reset(pc);
+        lastWasHold = false;
     }
     void PlaceOnBoard() {
         PlaceOnBoard(randgen());
@@ -456,8 +494,9 @@ void mvcoladdstr(int y, int x, short col, const char* str) {
 }
 
 class Graphics {
+
     enum Pairs {
-        PAIR_BG = TP_SIZE + 1,
+        PAIR_BG = TP_LEN + 1,
         PAIR_BOARD0,
         PAIR_BOARD1,
         PAIR_BORDER,
@@ -503,18 +542,37 @@ public:
     }
     ~Graphics() {
         endwin();
-        printf("end of game\n");
+        printf("Game Over:\n  Score: %d\n  Level: %d\n  Cleared Lines: %d\n",
+               game.Score(), game.Level(), game.ClearedLines());
     }
+    static constexpr int LeftPad = 10;
     static constexpr int MatrixStartX = LeftPad + 2;
     static constexpr int MatrixEndX = MatrixStartX + 2 * Width;
     void DrawBegin() {
+        const std::string singleVertical = std::string(10, ' ');
+        attron(COLOR_PAIR(PAIR_TEXT));
+        mvaddstr(0, 2, "Hold:");
+        mvaddstr(0, MatrixEndX + 4, "Next:");
+
+        attron(COLOR_PAIR(PAIR_BORDER));
+        mvaddstr(1,0, singleVertical.c_str());
+        mvaddstr(5,0, singleVertical.c_str());
+
+        mvaddstr(1, MatrixEndX + 2, singleVertical.c_str());
+        mvaddstr(3*NextPiecesLen+2, MatrixEndX + 2, singleVertical.c_str());
+        for (int y = 1; y < 5; ++y)
+            mvaddstr(y, 0, "  ");
+        for (int y = 1; y < 3*NextPiecesLen+2; ++y)
+            mvaddstr(y, MatrixEndX + 10, "  ");
+
         const std::string verticalBorder = std::string(Width * 2 + 4, ' ');
-        //mvcoladdstr(0, LeftPad, PAIR_BORDER, verticalBorder.c_str());
-        mvcoladdstr(Height, LeftPad, PAIR_BORDER, verticalBorder.c_str());
+        //mvaddstr(0, LeftPad verticalBorder.c_str());
+        mvaddstr(Height, LeftPad, verticalBorder.c_str());
         for(int y = 0; y < Height; ++y) {
-            mvcoladdstr(Height - y - 1, LeftPad, PAIR_BORDER, "  ");
-            mvcoladdstr(Height - y - 1, MatrixEndX, PAIR_BORDER, "  ");
+            mvaddstr(y, LeftPad, "  ");
+            mvaddstr(y, MatrixEndX, "  ");
         }
+
     }
     void DrawMatrix() {
         move(0, LeftPad);
@@ -527,18 +585,40 @@ public:
         }
     }
     void DrawPlayer() {
-        attron(COLOR_PAIR(/*player.GetPiece() + 1*/ 3));
+        attron(COLOR_PAIR(player.GetPiece() + 1));
         for (auto pt : player.GetPoints()) {
             mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
         }
     }
+    void DrawVal(int y, int x, const char* str, int num) {
+        mvprintw(y, x, str);
+        mvprintw(y + 1, x, "  %d", num);
+    }
+
     void DrawInfo() {
         attron(COLOR_PAIR(PAIR_TEXT));
-        constexpr int x = LeftPad + (Width * 2) + 5;
-        mvprintw(2, x, "Score: %d", game.Score());
-        mvprintw(3, x, "Level: %d", game.Level());
-        mvprintw(4, x, "Goal:  %d", game.GoalLines());
-        mvprintw(6, x, "Cleared Lines: %d", game.ClearedLines());
+        constexpr int x = MatrixEndX + 3;
+        DrawVal(Height - 4, 1, "Level:", game.Level());
+        DrawVal(Height - 2, 1, "Goal:", game.GoalLines());
+        DrawVal(Height - 4, x, "Score:", game.Score());
+        DrawVal(Height - 2, x, "Cleared Lines:", game.ClearedLines());
+        if (player.GetHoldPiece() != -1)
+            DrawPiece(2, 2, player.GetHoldPiece());
+        for (int i = 0; i < NextPiecesLen; ++i) {
+            DrawPiece(2 + i * 3, MatrixEndX + 2, randgen.NextPiece(i));
+        }
+    }
+    const std::string pieceBgVertical = std::string(8, ' ');
+    void DrawPiece(int y, int x, Piece p) {
+        attron(COLOR_PAIR(PAIR_BG));
+        for (int i = 0; i< 3; ++i) {
+            mvaddstr(y+i, x, pieceBgVertical.c_str());
+        }
+        attron(COLOR_PAIR(p + 1));
+        for (int i = 0; i < 4; ++i) {
+            auto pt = PieceRotations[p][0][i];
+            mvaddstr(pt.y + y - 1, pt.x * 2 + x, "  ");
+        }
     }
 public:
     void Draw() {
@@ -559,11 +639,7 @@ public:
 
 /* TODO:
    - end screen
-   - show next
-   - hold
    - ghost piece
-   - score
-   - wall kick
  */
 int main() {
     generateTable();

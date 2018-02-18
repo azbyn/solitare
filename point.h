@@ -8,24 +8,24 @@ struct Point {
     constexpr Point() = default;
     constexpr Point(int x, int y)
             : x(x), y(y) {}
-    bool operator==(const Point& rhs) {
+    constexpr bool operator==(const Point& rhs) const {
         return x == rhs.x && y == rhs.y;
     }
-    bool operator!=(const Point& rhs) {
+    constexpr bool operator!=(const Point& rhs) const {
         return x != rhs.x || y != rhs.y;
     }
-    Point operator+(const Point& rhs) {
+    constexpr Point operator+(const Point& rhs) const {
         return Point(x + rhs.x, y + rhs.y);
     }
-    Point operator-(const Point& rhs) {
+    constexpr Point operator-(const Point& rhs) const {
         return Point(x - rhs.x, y - rhs.y);
     }
-    Point& operator+=(const Point& rhs) {
+    constexpr Point& operator+=(const Point& rhs) {
         x += rhs.x;
         y += rhs.y;
         return *this;
     }
-    Point& operator-=(const Point& rhs) {
+    constexpr Point& operator-=(const Point& rhs) {
         x -= rhs.x;
         y -= rhs.y;
         return *this;

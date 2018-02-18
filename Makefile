@@ -12,7 +12,7 @@ DEPS := $(OBJS:.o=.d)
 
 
 CPPFLAGS := $(INC_FLAGS)
-CPPFLAGS += -Wall -Wextra -g -std=c++17 -ferror-limit=1 \
+CPPFLAGS += -Wall -Wextra -g -pg -std=c++17 -ferror-limit=1 \
 -Wunused-const-variable
 #CPPFLAGS += -g -std=c++17 -Weverything \
 -Wno-c++98-compat \

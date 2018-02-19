@@ -1,5 +1,5 @@
-#include "point.h"
 #include "misc.h"
+#include "point.h"
 
 #include <curses.h>
 #include <signal.h>
@@ -93,7 +93,8 @@ void generateTable() {
 }
 
 //generated using generateTable
-constexpr std::array<Point, 4> PieceRotations[TP_LEN][4] = {
+using PiecePoints = std::array<Point, 4>;
+constexpr PiecePoints PieceRotations[TP_LEN][4] = {
     {{{{0, 2}, {1, 2}, {2, 2}, {3, 2}}},
      {{{2, 3}, {2, 2}, {2, 1}, {2, 0}}},
      {{{0, 1}, {1, 1}, {2, 1}, {3, 1}}},
@@ -152,6 +153,13 @@ constexpr int Height = 20;
 constexpr int MatrixSizeY = 30;
 constexpr int NextPiecesLen = 3;
 
+void waitAFrame() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+}
+void anyKey() {
+    while (getch() == ERR) // wait for any actual keypress
+        waitAFrame();
+}
 
 class RandomGenerator {
     std::array<Piece, TP_LEN> bags[2] = {};
@@ -180,13 +188,12 @@ public:
     }
     Piece NextPiece(int i) const {
         int ix = index + i;
-        if (ix >= TP_LEN - 1)
+        if (ix >= TP_LEN)
             return bags[!bagIndex][ix - TP_LEN];
         return bags[bagIndex][ix];
     }
 
 } randgen;
-
 
 class Game {
     int score = 0;
@@ -195,7 +202,7 @@ class Game {
     int level = 0;
     uint8_t matrix[MatrixSizeY * Width];
     bool running = true;
-    void (*drawPause) (void) = nullptr;
+    void (*drawPause)(void) = nullptr;
     int RequiredLines() const { return (level + 1) * 5; }
 
     void ClearLine(int y) {
@@ -214,7 +221,7 @@ public:
     void IncreaseScore(int x) {
         score += x;
     }
-    void Init(void (*drawPause) (void)) {
+    void Init(void (*drawPause)(void)) {
         this->drawPause = drawPause;
     }
     void End() {
@@ -222,15 +229,14 @@ public:
     }
     void Pause() {
         drawPause();
-        while (getch() == ERR)
-            ; // wait for any actual keypress
+        anyKey();
     }
 
     uint8_t& Matrix(Point p) { return matrix[p.y * Width + p.x]; }
     uint8_t& Matrix(int x, int y) { return matrix[y * Width + x]; }
     float Speed() const { return speed(level); }
-    int ClearedLines() const { return totalClearedLines;  }
-    int GoalLines() const { return RequiredLines() - clearedLinesThisLevel;  }
+    int ClearedLines() const { return totalClearedLines; }
+    int GoalLines() const { return RequiredLines() - clearedLinesThisLevel; }
     int Score() const { return score; }
     int Level() const { return level + 1; }
     bool Running() const { return running; }
@@ -244,7 +250,7 @@ public:
             }
             ClearLine(y);
             ++clearedLines;
-            continue;//redo line
+            continue; //redo line
         nextLine:
             ++y;
         }
@@ -256,19 +262,38 @@ public:
         }
     }
 
-
 } game;
 
 class Player {
-    std::array<Point, 4> points;
+    PiecePoints points;
+    PiecePoints ghostPoints;
     Point pos;
     int rotation;
     Piece piece;
     std::chrono::time_point<std::chrono::system_clock> lastDrop;
     Piece holdPiece = TP_EMPTY;
-    bool lastWasHold = true;
+    bool lastWasHold = false;
 
-
+    constexpr void UpdatePtsBase(PiecePoints& pts, Point p) const {
+        for (int i = 0; i < 4; ++i) {
+            pts[i] = PieceRotations[piece][rotation][i] + p;
+        }
+    }
+    void UpdatePoints() { UpdatePtsBase(points, pos); }
+    void UpdateGhostPoints() {
+        Point p = pos;
+        for (;;) {
+            for (int i = 0; i < 4; ++i) {
+                ghostPoints[i] = PieceRotations[piece][rotation][i] + p;
+                if (game.Matrix(ghostPoints[i]) || ghostPoints[i].y < 0) {
+                    ++p.y;
+                    UpdatePtsBase(ghostPoints, p);
+                    return;
+                }
+            }
+            --p.y;
+        }
+    }
     void Reset(Piece p) {
         if (p == TP_I && game.Matrix(4, Height - 1)) game.End();
         pos = Point(3, Height - 3);
@@ -276,27 +301,19 @@ class Player {
         piece = p;
         UpdatePoints();
         for (auto pt : points) {
-            if (game.Matrix(pt) && pt.y >= Height) {
-                game.End();
-                return;
-            }/*
             if (game.Matrix(pt)) {
                 for (auto p : points) {
                     if (p.y >= Height) {
-                        ++pos.y;//just visual
+                        ++pos.y; //just visual
                         UpdatePoints();
                         game.End();
+                        return;
                     }
                 }
-                }*/
+            }
         }
+        UpdateGhostPoints();
         ResetDrop();
-    }
-
-    void UpdatePoints() {
-        for (int i = 0; i < 4; ++i) {
-            points[i] = PieceRotations[piece][rotation][i] + pos;
-        }
     }
 
 public:
@@ -304,8 +321,11 @@ public:
         Reset(p);
     }
     Player() : Player(randgen()) {}
-    constexpr const std::array<Point, 4>& GetPoints() const {
+    constexpr const PiecePoints& GetPoints() const {
         return points;
+    }
+    constexpr const PiecePoints& GetGhostPoints() const {
+        return ghostPoints;
     }
     constexpr Piece GetPiece() const {
         return piece;
@@ -324,12 +344,11 @@ public:
             holdPiece = tmp;
         }
         lastWasHold = true;
-
     }
 
     void Move(int x) {
         pos.x += x;
-        std::array<Point, 4> bk = points;
+        PiecePoints bk = points;
         UpdatePoints();
         for (auto& pt : points) {
             if (game.Matrix(pt) != 0 || pt.x < 0 || pt.x >= Width) {
@@ -338,6 +357,7 @@ public:
                 return;
             }
         }
+        UpdateGhostPoints();
     }
     void Fall() {
         --pos.y;
@@ -402,8 +422,10 @@ public:
         // can't wall kick
         pos.x = tmpx;
         rotation = tmprot;
+        UpdateGhostPoints();
         UpdatePoints();
     }
+
 private:
     bool CheckRotation() {
         UpdatePoints();
@@ -412,8 +434,10 @@ private:
                 return false;
             }
         }
+        UpdateGhostPoints();
         return true;
     }
+
 public:
     void Input() {
         int c = getch();
@@ -422,9 +446,8 @@ public:
         case KEY_BACKSPACE:
         case 'q':
         case 27:
-        case KEY_F(1):
             game.End();
-        break;
+            break;
         case 'z':
         case 'a':
             Rotate(-1);
@@ -438,6 +461,7 @@ public:
         case 'd':
             Hold();
             break;
+        case KEY_F(1):
         case 'p':
             game.Pause();
             break;
@@ -494,13 +518,13 @@ void mvcoladdstr(int y, int x, short col, const char* str) {
 }
 
 class Graphics {
-
     enum Pairs {
         PAIR_BG = TP_LEN + 1,
         PAIR_BOARD0,
         PAIR_BOARD1,
         PAIR_BORDER,
         PAIR_TEXT,
+        PAIR_GHOST_PIECE,
     };
 
     void InitColors() {
@@ -517,10 +541,12 @@ class Graphics {
         addPiece(TP_Z, COLOR_RED);
         addColor(PAIR_BG, bgColor);
         addColor(PAIR_BOARD0, COLOR_BASE00);
-        addColor(PAIR_BOARD1, COLOR_BASE01);
+        addColor(PAIR_BOARD1, COLOR_BASE00);
+        addColor(PAIR_GHOST_PIECE, COLOR_BASE01);
         addColor(PAIR_BORDER, COLOR_BASE03);
         init_pair(PAIR_TEXT, COLOR_WHITE, bgColor);
     }
+
 public:
     Graphics() {
         initscr(); /* initialize the curses library */
@@ -555,24 +581,23 @@ public:
         mvaddstr(0, MatrixEndX + 4, "Next:");
 
         attron(COLOR_PAIR(PAIR_BORDER));
-        mvaddstr(1,0, singleVertical.c_str());
-        mvaddstr(5,0, singleVertical.c_str());
+        mvaddstr(1, 0, singleVertical.c_str());
+        mvaddstr(5, 0, singleVertical.c_str());
 
         mvaddstr(1, MatrixEndX + 2, singleVertical.c_str());
-        mvaddstr(3*NextPiecesLen+2, MatrixEndX + 2, singleVertical.c_str());
+        mvaddstr(3 * NextPiecesLen + 2, MatrixEndX + 2, singleVertical.c_str());
         for (int y = 1; y < 5; ++y)
             mvaddstr(y, 0, "  ");
-        for (int y = 1; y < 3*NextPiecesLen+2; ++y)
+        for (int y = 1; y < 3 * NextPiecesLen + 2; ++y)
             mvaddstr(y, MatrixEndX + 10, "  ");
 
         const std::string verticalBorder = std::string(Width * 2 + 4, ' ');
         //mvaddstr(0, LeftPad verticalBorder.c_str());
         mvaddstr(Height, LeftPad, verticalBorder.c_str());
-        for(int y = 0; y < Height; ++y) {
+        for (int y = 0; y < Height; ++y) {
             mvaddstr(y, LeftPad, "  ");
             mvaddstr(y, MatrixEndX, "  ");
         }
-
     }
     void DrawMatrix() {
         move(0, LeftPad);
@@ -582,12 +607,6 @@ public:
                 auto col = game.Matrix(x, y);
                 coladdstr(col ? col : (x % 2 ? PAIR_BOARD0 : PAIR_BOARD1), "  ");
             }
-        }
-    }
-    void DrawPlayer() {
-        attron(COLOR_PAIR(player.GetPiece() + 1));
-        for (auto pt : player.GetPoints()) {
-            mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
         }
     }
     void DrawVal(int y, int x, const char* str, int num) {
@@ -611,35 +630,59 @@ public:
     const std::string pieceBgVertical = std::string(8, ' ');
     void DrawPiece(int y, int x, Piece p) {
         attron(COLOR_PAIR(PAIR_BG));
-        for (int i = 0; i< 3; ++i) {
-            mvaddstr(y+i, x, pieceBgVertical.c_str());
+        for (int i = 0; i < 3; ++i) {
+            mvaddstr(y + i, x, pieceBgVertical.c_str());
         }
         attron(COLOR_PAIR(p + 1));
         for (int i = 0; i < 4; ++i) {
             auto pt = PieceRotations[p][0][i];
-            mvaddstr(pt.y + y - 1, pt.x * 2 + x, "  ");
+            mvaddstr(3 - pt.y + y, pt.x * 2 + x, "  ");
         }
     }
+    void DrawPlayer() {
+        attron(COLOR_PAIR(player.GetPiece() + 1));
+        for (auto pt : player.GetPoints()) {
+            mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
+        }
+    }
+
+    void DrawGhostPiece() {
+        attron(COLOR_PAIR(PAIR_GHOST_PIECE));
+        for (auto pt : player.GetGhostPoints()) {
+            mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
+        }
+    }
+
 public:
     void Draw() {
         DrawInfo();
         DrawMatrix();
+        DrawGhostPiece();
         DrawPlayer();
     }
     static void DrawPause() {
-        mvcoladdstr(5, 10, PAIR_TEXT, "Paused");
+        mvcoladdstr(5, MatrixEndX - 13, PAIR_TEXT, "Paused");
     }
 
     void DrawEndScreen() {
-        
+        Draw();
+        mvcoladdstr(5, MatrixEndX - 14, PAIR_TEXT, "GAME OVER");
     }
 } graphics;
 
-
-
 /* TODO:
-   - end screen
-   - ghost piece
+   - at pause press q to quit
+   - at end press r to restart
+   - replay
+   - highscores
+ */
+/*
+  personal record
+  Level:                            Score:
+  9                                 137378
+  Goal:                             Cleared Lines:
+  35                                190
+
  */
 int main() {
     generateTable();
@@ -650,9 +693,9 @@ int main() {
         player.Input();
         player.Gravity();
         graphics.Draw();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        waitAFrame();
     }
-    graphics.Draw();
     graphics.DrawEndScreen();
+    anyKey();
     return 0;
 }

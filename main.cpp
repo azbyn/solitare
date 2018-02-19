@@ -2,16 +2,16 @@
 #include "point.h"
 
 #include <curses.h>
-#include <signal.h>
-#include <stdint.h>
-#include <string.h>
-//#include <stdlib.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cstdint>
+#include <cstring>
 #include <exception>
+#include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -153,12 +153,18 @@ constexpr int Height = 20;
 constexpr int MatrixSizeY = 30;
 constexpr int NextPiecesLen = 3;
 
+using Callback = void (*)(void);
+
 void waitAFrame() {
     std::this_thread::sleep_for(std::chrono::milliseconds(16));
 }
-void anyKey() {
-    while (getch() == ERR) // wait for any actual keypress
+void keyChoice(int a, Callback cbA, int b, Callback cbB) {
+    for (;;) {
+        auto c = tolower(getch());
+        if (c == a) { cbA(); return; }
+        if (c == b) { cbB(); return; }
         waitAFrame();
+    }
 }
 
 class RandomGenerator {
@@ -174,8 +180,7 @@ public:
             bags[0][i] = (Piece)i;
             bags[1][i] = (Piece)i;
         }
-        std::shuffle(bags[0].begin(), bags[0].end(), gen);
-        std::shuffle(bags[1].begin(), bags[1].end(), gen);
+        Restart();
     }
 
     Piece operator()() {
@@ -192,17 +197,25 @@ public:
             return bags[!bagIndex][ix - TP_LEN];
         return bags[bagIndex][ix];
     }
+    void Restart() {
+        bagIndex = 0;
+        index = 0;
+        std::shuffle(bags[0].begin(), bags[0].end(), gen);
+        std::shuffle(bags[1].begin(), bags[1].end(), gen);
+    }
 
 } randgen;
 
 class Game {
+    int highscore = 0;
+    bool hasHighscore = false;
     int score = 0;
     int clearedLinesThisLevel = 0;
     int totalClearedLines = 0;
     int level = 0;
     uint8_t matrix[MatrixSizeY * Width];
     bool running = true;
-    void (*drawPause)(void) = nullptr;
+    Callback pause;
     int RequiredLines() const { return (level + 1) * 5; }
 
     void ClearLine(int y) {
@@ -218,19 +231,27 @@ class Game {
     }
 
 public:
+    Game() { Restart(); }
+    void Restart() {
+        score = 0;
+        clearedLinesThisLevel = 0;
+        totalClearedLines = 0;
+        level = 0;
+        memset(matrix, 0, sizeof(matrix));
+        running = true;
+        hasHighscore = false;
+    }
+
     void IncreaseScore(int x) {
         score += x;
+        if (highscore < score) {
+            highscore = score;
+            hasHighscore = true;
+        }
     }
-    void Init(void (*drawPause)(void)) {
-        this->drawPause = drawPause;
-    }
-    void End() {
-        running = false;
-    }
-    void Pause() {
-        drawPause();
-        anyKey();
-    }
+    void Init(Callback pause) { this->pause = pause; }
+    void End() { running = false; }
+    void Pause() { pause(); }
 
     uint8_t& Matrix(Point p) { return matrix[p.y * Width + p.x]; }
     uint8_t& Matrix(int x, int y) { return matrix[y * Width + x]; }
@@ -238,6 +259,9 @@ public:
     int ClearedLines() const { return totalClearedLines; }
     int GoalLines() const { return RequiredLines() - clearedLinesThisLevel; }
     int Score() const { return score; }
+    int Highscore() const { return highscore; }
+    void SetHighscore(int i) { highscore = i; }
+    bool HasHighscore() const { return hasHighscore; }
     int Level() const { return level + 1; }
     bool Running() const { return running; }
     void CheckClearLines() {
@@ -261,7 +285,6 @@ public:
         case 4: IncreaseScore(Level() * 1200); break;
         }
     }
-
 } game;
 
 class Player {
@@ -321,6 +344,11 @@ public:
         Reset(p);
     }
     Player() : Player(randgen()) {}
+    void Restart() {
+        Reset(randgen());
+        holdPiece = TP_EMPTY;
+        lastWasHold = false;
+    }
     constexpr const PiecePoints& GetPoints() const {
         return points;
     }
@@ -440,14 +468,8 @@ private:
 
 public:
     void Input() {
-        int c = getch();
-        switch (c) {
+        switch (tolower(getch())) {
             // case ERR: continue;
-        case KEY_BACKSPACE:
-        case 'q':
-        case 27:
-            game.End();
-            break;
         case 'z':
         case 'a':
             Rotate(-1);
@@ -462,6 +484,8 @@ public:
             Hold();
             break;
         case KEY_F(1):
+        case 'q':
+        case 27:
         case 'p':
             game.Pause();
             break;
@@ -508,15 +532,6 @@ public:
     }
 } player;
 
-void coladdstr(short col, const char* str) {
-    attron(COLOR_PAIR(col));
-    addstr(str);
-}
-void mvcoladdstr(int y, int x, short col, const char* str) {
-    attron(COLOR_PAIR(col));
-    mvaddstr(y, x, str);
-}
-
 class Graphics {
     enum Pairs {
         PAIR_BG = TP_LEN + 1,
@@ -526,6 +541,14 @@ class Graphics {
         PAIR_TEXT,
         PAIR_GHOST_PIECE,
     };
+    static void coladdstr(short col, const char* str) {
+        attron(COLOR_PAIR(col));
+        addstr(str);
+    }
+    static void mvcoladdstr(int y, int x, short col, const char* str) {
+        attron(COLOR_PAIR(col));
+        mvaddstr(y, x, str);
+    }
 
     void InitColors() {
         start_color();
@@ -566,10 +589,15 @@ public:
             InitColors();
         DrawBegin();
     }
+    void Restart() {
+        clear();
+        DrawBegin();
+    }
+
     ~Graphics() {
         endwin();
-        printf("Game Over:\n  Score: %d\n  Level: %d\n  Cleared Lines: %d\n",
-               game.Score(), game.Level(), game.ClearedLines());
+        //printf("Game Over:\n  Score: %d\n  Level: %d\n  Cleared Lines: %d\n",
+        //       game.Score(), game.Level(), game.ClearedLines());
     }
     static constexpr int LeftPad = 10;
     static constexpr int MatrixStartX = LeftPad + 2;
@@ -592,7 +620,6 @@ public:
             mvaddstr(y, MatrixEndX + 10, "  ");
 
         const std::string verticalBorder = std::string(Width * 2 + 4, ' ');
-        //mvaddstr(0, LeftPad verticalBorder.c_str());
         mvaddstr(Height, LeftPad, verticalBorder.c_str());
         for (int y = 0; y < Height; ++y) {
             mvaddstr(y, LeftPad, "  ");
@@ -619,6 +646,7 @@ public:
         constexpr int x = MatrixEndX + 3;
         DrawVal(Height - 4, 1, "Level:", game.Level());
         DrawVal(Height - 2, 1, "Goal:", game.GoalLines());
+        DrawVal(Height - 7, x, "Hiscore:", game.Highscore());
         DrawVal(Height - 4, x, "Score:", game.Score());
         DrawVal(Height - 2, x, "Cleared Lines:", game.ClearedLines());
         if (player.GetHoldPiece() != -1)
@@ -627,11 +655,11 @@ public:
             DrawPiece(2 + i * 3, MatrixEndX + 2, randgen.NextPiece(i));
         }
     }
-    const std::string pieceBgVertical = std::string(8, ' ');
+    static const inline std::string PieceBgVertical = std::string(8, ' ');
     void DrawPiece(int y, int x, Piece p) {
         attron(COLOR_PAIR(PAIR_BG));
         for (int i = 0; i < 3; ++i) {
-            mvaddstr(y + i, x, pieceBgVertical.c_str());
+            mvaddstr(y + i, x, PieceBgVertical.c_str());
         }
         attron(COLOR_PAIR(p + 1));
         for (int i = 0; i < 4; ++i) {
@@ -660,42 +688,70 @@ public:
         DrawGhostPiece();
         DrawPlayer();
     }
-    static void DrawPause() {
-        mvcoladdstr(5, MatrixEndX - 13, PAIR_TEXT, "Paused");
+    void DrawPause() {
+        DrawScreenBase("Paused", true);
     }
 
     void DrawEndScreen() {
-        Draw();
-        mvcoladdstr(5, MatrixEndX - 14, PAIR_TEXT, "GAME OVER");
+        DrawScreenBase(game.HasHighscore() ? "HIGH SCORE" : "GAME OVER", false);
+    }
+private:
+    void DrawScreenBase(std::string title, bool isPause) {
+        const std::string verticalBar = std::string(Width * 2, ' ');
+        DrawAtMiddle(PAIR_BORDER, 3, verticalBar);
+        for (int i = 4; i < 10; ++i)
+            DrawAtMiddle(PAIR_TEXT, i, verticalBar);
+
+        DrawAtMiddle(PAIR_BORDER, 10, verticalBar);
+        DrawAtMiddle(PAIR_TEXT, 5, title);
+        DrawAtMiddle(PAIR_TEXT, 7, isPause ?
+                     "Quit      Resume" :
+                     "Quit      Replay");
+        DrawAtMiddle(PAIR_TEXT, 8, "  Q          R  ");
+    }
+
+    void DrawAtMiddle(short color, int y, std::string s) {
+        mvcoladdstr(y, MatrixStartX + Width - (s.size() / 2), color, s.c_str());
     }
 } graphics;
 
 /* TODO:
-   - at pause press q to quit
-   - at end press r to restart
-   - replay
-   - highscores
+   - Windows support
  */
-/*
-  personal record
-  Level:                            Score:
-  9                                 137378
-  Goal:                             Cleared Lines:
-  35                                190
-
- */
+const std::string HighscoresFile = "highscores";
+void writeHighscore() {
+    std::ofstream f(HighscoresFile);
+    f << game.Highscore() << "\n";
+}
 int main() {
-    generateTable();
-    signal(SIGINT, [](int) { game.End(); });
+    //generateTable();
+    std::ifstream f(HighscoresFile);
+    int fileHighscore;
+    f >> fileHighscore;
+    game.SetHighscore(fileHighscore);
+    f.close();
+
+    signal(SIGINT, [](int) { game.End(); exit(0); });
     atexit([] { game.End(); });
-    game.Init(&Graphics::DrawPause);
-    while (game.Running()) {
-        player.Input();
-        player.Gravity();
-        graphics.Draw();
-        waitAFrame();
+    game.Init([] {
+            graphics.DrawPause();
+            keyChoice('q', [] { writeHighscore(); exit(0); },
+                      'r', [] { /* don't do anything */ });
+        });
+    for (;;) {
+        while (game.Running()) {
+            player.Input();
+            player.Gravity();
+            graphics.Draw();
+            waitAFrame();
+        }
+        graphics.DrawEndScreen();
+        keyChoice('q', [] { writeHighscore(); exit(0); },
+                  'r', [] {
+                      randgen.Restart();
+                      game.Restart();
+                      player.Restart();
+                      graphics.Restart(); });
     }
-    graphics.DrawEndScreen();
-    anyKey();
     return 0;
 }

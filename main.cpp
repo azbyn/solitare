@@ -297,7 +297,7 @@ class Player {
     Piece holdPiece = TP_EMPTY;
     bool lastWasHold = false;
 
-    constexpr void UpdatePtsBase(PiecePoints& pts, Point p) const {
+    void UpdatePtsBase(PiecePoints& pts, Point p) const {
         for (int i = 0; i < 4; ++i) {
             pts[i] = PieceRotations[piece][rotation][i] + p;
         }
@@ -349,16 +349,16 @@ public:
         holdPiece = TP_EMPTY;
         lastWasHold = false;
     }
-    constexpr const PiecePoints& GetPoints() const {
+    const PiecePoints& GetPoints() const {
         return points;
     }
-    constexpr const PiecePoints& GetGhostPoints() const {
+    const PiecePoints& GetGhostPoints() const {
         return ghostPoints;
     }
-    constexpr Piece GetPiece() const {
+    Piece GetPiece() const {
         return piece;
     }
-    constexpr Piece GetHoldPiece() const {
+    Piece GetHoldPiece() const {
         return holdPiece;
     }
     void Hold() {
@@ -632,7 +632,7 @@ public:
             move(Height - y - 1, MatrixStartX);
             for (int x = 0; x < Width; ++x) {
                 auto col = game.Matrix(x, y);
-                coladdstr(col ? col : (x % 2 ? PAIR_BOARD0 : PAIR_BOARD1), "  ");
+                coladdstr(col ? col : (uint8_t)(x % 2 ? PAIR_BOARD0 : PAIR_BOARD1), "  ");
             }
         }
     }
@@ -655,11 +655,11 @@ public:
             DrawPiece(2 + i * 3, MatrixEndX + 2, randgen.NextPiece(i));
         }
     }
-    static const inline std::string PieceBgVertical = std::string(8, ' ');
+    const std::string pieceBgVertical = std::string(8, ' ');
     void DrawPiece(int y, int x, Piece p) {
         attron(COLOR_PAIR(PAIR_BG));
         for (int i = 0; i < 3; ++i) {
-            mvaddstr(y + i, x, PieceBgVertical.c_str());
+            mvaddstr(y + i, x, pieceBgVertical.c_str());
         }
         attron(COLOR_PAIR(p + 1));
         for (int i = 0; i < 4; ++i) {

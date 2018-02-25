@@ -20,12 +20,12 @@ struct Point {
     constexpr Point operator-(const Point& rhs) const {
         return Point(x - rhs.x, y - rhs.y);
     }
-    constexpr Point& operator+=(const Point& rhs) {
+    Point& operator+=(const Point& rhs) {
         x += rhs.x;
         y += rhs.y;
         return *this;
     }
-    constexpr Point& operator-=(const Point& rhs) {
+    Point& operator-=(const Point& rhs) {
         x -= rhs.x;
         y -= rhs.y;
         return *this;

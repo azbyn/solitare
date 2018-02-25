@@ -1,4 +1,4 @@
-CXX := cc_args clang++
+CXX := cc_args g++
 SRC_DIR := .
 BUILD_DIR := build
 TARGET := tetris
@@ -12,8 +12,8 @@ DEPS := $(OBJS:.o=.d)
 
 
 CPPFLAGS := $(INC_FLAGS)
-CPPFLAGS += -Wall -Wextra -g -pg -std=c++17 -ferror-limit=1 \
--Wunused-const-variable
+CPPFLAGS += -Wall -Wextra -g -pg -std=c++11 -Wpedantic \
+-Wno-unused-const-variable
 #CPPFLAGS += -g -std=c++17 -Weverything \
 -Wno-c++98-compat \
 -Wno-c++98-compat-pedantic \

@@ -3,3 +3,7 @@
 -Wextra
 -std=c++17
 -Wunused-const-variable
+-Wno-unused-const-variable
+-std=c++11
+-Wpendatic
+-Wpedantic

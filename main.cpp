@@ -1,7 +1,13 @@
-#include "misc.h"
 #include "point.h"
-
-#include <curses.h>
+using azbyn::Point;
+#include "misc.h"
+using azbyn::Callback;
+using azbyn::string_format;
+#include "prophanity.h"
+using namespace azbyn::prophanity;
+using azbyn::Rect;
+using azbyn::Rect4;
+using azbyn::RectWH;
 
 #include <algorithm>
 #include <array>
@@ -9,6 +15,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -17,82 +24,19 @@
 #include <string>
 #include <thread>
 
-using azbyn::Point;
-using azbyn::string_format;
-
-#define COLOR_ORANGE 16
-#define COLOR_BASE00 0
-#define COLOR_BASE01 18
-#define COLOR_BASE02 19
-#define COLOR_BASE03 8
-#define COLOR_BASE04 20
-#define COLOR_BASE05 7
-#define COLOR_BASE06 21
-#define COLOR_BASE07 15
-
-#define LEN(x) (sizeof(x) / sizeof(*x))
-
-// clang-format off
-enum Piece { TP_EMPTY = -1, TP_I, TP_L, TP_J, TP_O, TP_S, TP_T, TP_Z, TP_LEN };
-constexpr const char PieceRotationsStr[TP_LEN][16 * 4 + 1] = {
-    // I
-    "...." "..x." "...." ".x.."
-    "xxxx" "..x." "...." ".x.."
-    "...." "..x." "xxxx" ".x.."
-    "...." "..x." "...." ".x..",
-    // L
-    "x..." ".xx." "...." ".x.."
-    "xxx." ".x.." "xxx." ".x.."
-    "...." ".x.." "..x." "xx.."
-    "...." "...." "...." "....",
-    // J
-    "..x." ".x.." "...." "xx.."
-    "xxx." ".x.." "xxx." ".x.."
-    "...." ".xx." "x..." ".x.."
-    "...." "...." "...." "....",
-    // O
-    ".xx." ".xx." ".xx." ".xx."
-    ".xx." ".xx." ".xx." ".xx."
-    "...." "...." "...." "...."
-    "...." "...." "...." "....",
-    // S
-    ".xx." ".x.." "...." "x..."
-    "xx.." ".xx." ".xx." "xx.."
-    "...." "..x." "xx.." ".x.."
-    "...." "...." "...." "....",
-    // T
-    ".x.." ".x.." "...." ".x.."
-    "xxx." ".xx." "xxx." "xx.."
-    "...." ".x.." ".x.." ".x.."
-    "...." "...." "...." "....",
-    // Z
-    "xx.." "..x." "...." ".x.."
-    ".xx." ".xx." "xx.." "xx.."
-    "...." ".x.." ".xx." "x..."
-    "...." "...." "...." "....",
+enum Piece {
+    TP_EMPTY = -1,
+    TP_I,
+    TP_L,
+    TP_J,
+    TP_O,
+    TP_S,
+    TP_T,
+    TP_Z,
+    TP_LEN
 };
-// clang-format on
-void generateTable() {
-    return;
-    constexpr char indent[] = "    ";
-    for (int p = 0; p < TP_LEN; ++p) {
-        printf("%s{{{", indent);
-        for (int r = 0; r < 4; ++r) {
-            if (r != 0) printf("%s {{", indent);
-            int i = 0;
-            for (int x = 0; x < 4; ++x) {
-                for (int y = 0; y < 4; ++y) {
-                    if (PieceRotationsStr[p][(16 * y) + (r * 4) + x] == 'x')
-                        printf("{%d, %d}%s", x, 3 - y, ++i < 4 ? ", " : "");
-                }
-            }
-            printf(r == 3 ? "}}},\n" : "}},\n");
-        }
-    }
-    exit(0);
-}
 
-//generated using generateTable
+//generated using generate-table.py
 using PiecePoints = std::array<Point, 4>;
 constexpr PiecePoints PieceRotations[TP_LEN][4] = {
     {{{{0, 2}, {1, 2}, {2, 2}, {3, 2}}},
@@ -125,35 +69,28 @@ constexpr PiecePoints PieceRotations[TP_LEN][4] = {
      {{{0, 2}, {0, 1}, {1, 3}, {1, 2}}}},
 };
 constexpr float _speeds[] = {
-    .80,
-    .72,
-    .63,
-    .55,
-    .47,
-    .38,
-    .30,
-    .22,
-    .13,
-    .10,
-    .08,
-    .08,
-    .08,
-    .07,
-    .07,
-    .07,
-    .05,
-    .05,
-    .05,
+    1.0,
+    0.793,
+    0.618,
+    0.473,
+    0.355,
+    0.262,
+    0.190,
+    0.135,
+    0.094,
+    0.064,
+    0.043,
+    0.028,
+    0.018,
+    0.011,
+    0.007,
 };
-constexpr float speed(int level) {
-    return level > 29 ? .02 : (level > 18 ? .03 : _speeds[level]);
-}
+constexpr float speed(int level) { return level > 14 ? .007 : _speeds[level]; }
+
 constexpr int Width = 10;
 constexpr int Height = 20;
 constexpr int MatrixSizeY = 30;
 constexpr int NextPiecesLen = 3;
-
-using Callback = void (*)(void);
 
 void waitAFrame() {
     std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -161,8 +98,14 @@ void waitAFrame() {
 void keyChoice(int a, Callback cbA, int b, Callback cbB) {
     for (;;) {
         auto c = tolower(getch());
-        if (c == a) { cbA(); return; }
-        if (c == b) { cbB(); return; }
+        if (c == a) {
+            cbA();
+            return;
+        }
+        if (c == b) {
+            cbB();
+            return;
+        }
         waitAFrame();
     }
 }
@@ -206,9 +149,10 @@ public:
 
 } randgen;
 
+constexpr char HighscoresFile[] = "highscores";
+
 class Game {
     int highscore = 0;
-    bool hasHighscore = false;
     int score = 0;
     int clearedLinesThisLevel = 0;
     int totalClearedLines = 0;
@@ -229,9 +173,21 @@ class Game {
                sizeof(*matrix) * Width * (MatrixSizeY - y - 1));
         memset(matrix + (MatrixSizeY - 1) * Width, 0, Width);
     }
+    void ReadHighscore() {
+        std::ifstream f(HighscoresFile);
+        f >> highscore;
+    }
+    void WriteHighscore() {
+        std::ofstream f(HighscoresFile);
+        f << highscore << "\n";
+    }
 
 public:
-    Game() { Restart(); }
+    Game() {
+        ReadHighscore();
+        Restart();
+    }
+    ~Game() { WriteHighscore(); }
     void Restart() {
         score = 0;
         clearedLinesThisLevel = 0;
@@ -239,31 +195,28 @@ public:
         level = 0;
         memset(matrix, 0, sizeof(matrix));
         running = true;
-        hasHighscore = false;
     }
 
     void IncreaseScore(int x) {
         score += x;
         if (highscore < score) {
             highscore = score;
-            hasHighscore = true;
         }
     }
-    void Init(Callback pause) { this->pause = pause; }
-    void End() { running = false; }
-    void Pause() { pause(); }
+    inline void Init(Callback pause) { this->pause = pause; }
+    inline void End() { running = false; }
+    inline void Pause() { pause(); }
 
-    uint8_t& Matrix(Point p) { return matrix[p.y * Width + p.x]; }
-    uint8_t& Matrix(int x, int y) { return matrix[y * Width + x]; }
-    float Speed() const { return speed(level); }
-    int ClearedLines() const { return totalClearedLines; }
-    int GoalLines() const { return RequiredLines() - clearedLinesThisLevel; }
-    int Score() const { return score; }
-    int Highscore() const { return highscore; }
-    void SetHighscore(int i) { highscore = i; }
-    bool HasHighscore() const { return hasHighscore; }
-    int Level() const { return level + 1; }
-    bool Running() const { return running; }
+    inline uint8_t& Matrix(Point p) { return matrix[p.y * Width + p.x]; }
+    inline uint8_t& Matrix(int x, int y) { return matrix[y * Width + x]; }
+    inline float Speed() const { return speed(level); }
+    inline int ClearedLines() const { return totalClearedLines; }
+    inline int GoalLines() const { return RequiredLines() - clearedLinesThisLevel; }
+    inline int Score() const { return score; }
+    inline int Highscore() const { return highscore; }
+    inline bool HasHighscore() const { return score == highscore; }
+    inline int Level() const { return level + 1; }
+    inline bool Running() const { return running; }
     void CheckClearLines() {
         unsigned y = 0;
         int clearedLines = 0;
@@ -292,14 +245,14 @@ class Player {
     PiecePoints ghostPoints;
     Point pos;
     int rotation;
-    Piece piece;
+    Piece pieceType;
     std::chrono::time_point<std::chrono::system_clock> lastDrop;
     Piece holdPiece = TP_EMPTY;
     bool lastWasHold = false;
 
     void UpdatePtsBase(PiecePoints& pts, Point p) const {
         for (int i = 0; i < 4; ++i) {
-            pts[i] = PieceRotations[piece][rotation][i] + p;
+            pts[i] = PieceRotations[pieceType][rotation][i] + p;
         }
     }
     void UpdatePoints() { UpdatePtsBase(points, pos); }
@@ -307,7 +260,7 @@ class Player {
         Point p = pos;
         for (;;) {
             for (int i = 0; i < 4; ++i) {
-                ghostPoints[i] = PieceRotations[piece][rotation][i] + p;
+                ghostPoints[i] = PieceRotations[pieceType][rotation][i] + p;
                 if (game.Matrix(ghostPoints[i]) || ghostPoints[i].y < 0) {
                     ++p.y;
                     UpdatePtsBase(ghostPoints, p);
@@ -321,7 +274,7 @@ class Player {
         if (p == TP_I && game.Matrix(4, Height - 1)) game.End();
         pos = Point(3, Height - 3);
         rotation = 0;
-        piece = p;
+        pieceType = p;
         UpdatePoints();
         for (auto pt : points) {
             if (game.Matrix(pt)) {
@@ -340,34 +293,24 @@ class Player {
     }
 
 public:
-    Player(Piece p) {
-        Reset(p);
-    }
+    Player(Piece p) { Reset(p); }
     Player() : Player(randgen()) {}
     void Restart() {
         Reset(randgen());
         holdPiece = TP_EMPTY;
         lastWasHold = false;
     }
-    const PiecePoints& GetPoints() const {
-        return points;
-    }
-    const PiecePoints& GetGhostPoints() const {
-        return ghostPoints;
-    }
-    Piece GetPiece() const {
-        return piece;
-    }
-    Piece GetHoldPiece() const {
-        return holdPiece;
-    }
+    inline const PiecePoints& GetPoints() const { return points; }
+    inline const PiecePoints& GetGhostPoints() const { return ghostPoints; }
+    inline Piece GetPieceType() const { return pieceType; }
+    inline Piece GetHoldPiece() const { return holdPiece; }
     void Hold() {
         if (holdPiece == TP_EMPTY) {
-            holdPiece = piece;
+            holdPiece = pieceType;
             Reset(randgen());
         }
         else if (!lastWasHold) {
-            Piece tmp = piece;
+            Piece tmp = pieceType;
             Reset(holdPiece);
             holdPiece = tmp;
         }
@@ -439,7 +382,7 @@ public:
         if (CheckRotation())
             return;
         // special cases for I
-        if (piece == TP_I) {
+        if (pieceType == TP_I) {
             pos.x = tmpx + 2;
             if (CheckRotation())
                 return;
@@ -506,20 +449,15 @@ public:
 
     void PlaceOnBoard(Piece pc) {
         for (auto pt : points) {
-            /*if (pt.y >= Height) {
-                game.End();
-                }*/
-            game.Matrix(pt) = piece + 1;
+            game.Matrix(pt) = pieceType + 1;
         }
         game.CheckClearLines();
         Reset(pc);
         lastWasHold = false;
     }
-    void PlaceOnBoard() {
-        PlaceOnBoard(randgen());
-    }
+    inline void PlaceOnBoard() { PlaceOnBoard(randgen()); }
 
-    void ResetDrop() {
+    inline void ResetDrop() {
         lastDrop = std::chrono::system_clock::now();
     }
     void Gravity() {
@@ -535,39 +473,32 @@ public:
 class Graphics {
     enum Pairs {
         PAIR_BG = TP_LEN + 1,
-        PAIR_BOARD0,
-        PAIR_BOARD1,
+        PAIR_BOARD,
         PAIR_BORDER,
         PAIR_TEXT,
         PAIR_GHOST_PIECE,
     };
-    static void coladdstr(short col, const char* str) {
-        attron(COLOR_PAIR(col));
-        addstr(str);
-    }
-    static void mvcoladdstr(int y, int x, short col, const char* str) {
-        attron(COLOR_PAIR(col));
-        mvaddstr(y, x, str);
-    }
 
     void InitColors() {
         start_color();
-        constexpr short bgColor = COLOR_BASE00;
+        constexpr short bgColor = COL_BLACK;
         auto addPiece = [](Piece p, short fg) { init_pair(p + 1, fg, fg); };
         auto addColor = [](int i, short col) { init_pair(i, col, col); };
-        addPiece(TP_I, COLOR_CYAN);
-        addPiece(TP_L, COLOR_BLUE);
-        addPiece(TP_J, COLOR_ORANGE);
-        addPiece(TP_O, COLOR_YELLOW);
-        addPiece(TP_S, COLOR_GREEN);
-        addPiece(TP_T, COLOR_MAGENTA);
-        addPiece(TP_Z, COLOR_RED);
+        addPiece(TP_I, COL_CYAN);
+        addPiece(TP_L, COL_BLUE);
+        addPiece(TP_J, COL_ORANGE);
+        addPiece(TP_O, COL_YELLOW);
+        addPiece(TP_S, COL_GREEN);
+        addPiece(TP_T, COL_MAGENTA);
+        addPiece(TP_Z, COL_RED);
         addColor(PAIR_BG, bgColor);
-        addColor(PAIR_BOARD0, COLOR_BASE00);
-        addColor(PAIR_BOARD1, COLOR_BASE00);
-        addColor(PAIR_GHOST_PIECE, COLOR_BASE01);
-        addColor(PAIR_BORDER, COLOR_BASE03);
-        init_pair(PAIR_TEXT, COLOR_WHITE, bgColor);
+        addColor(PAIR_BOARD, COL_BLACK);
+
+        bool isTerm256 = std::string(getenv("TERM")).find("256") != std::string::npos;
+
+        addColor(PAIR_GHOST_PIECE, BASE16 ? 18 : (isTerm256 ? 236 : COL_DARK_GRAY));
+        addColor(PAIR_BORDER, isTerm256 ? COL_DARK_GRAY : COL_LIGHT_GRAY);
+        init_pair(PAIR_TEXT, COL_DARK_WHITE, bgColor);
     }
 
 public:
@@ -580,7 +511,6 @@ public:
         nodelay(stdscr, true);
         meta(stdscr, true);
         curs_set(0);
-        //putenv("ESCDELAY=25");
         if (COLS < 2 * Width + 15 + LeftPad || LINES < Height + 1) {
             throw std::runtime_error(
                 string_format("terminal too small %dx%d", COLS, LINES));
@@ -596,35 +526,22 @@ public:
 
     ~Graphics() {
         endwin();
-        //printf("Game Over:\n  Score: %d\n  Level: %d\n  Cleared Lines: %d\n",
-        //       game.Score(), game.Level(), game.ClearedLines());
     }
     static constexpr int LeftPad = 10;
     static constexpr int MatrixStartX = LeftPad + 2;
     static constexpr int MatrixEndX = MatrixStartX + 2 * Width;
     void DrawBegin() {
-        const std::string singleVertical = std::string(10, ' ');
-        attron(COLOR_PAIR(PAIR_TEXT));
+        setcol(PAIR_TEXT);
         mvaddstr(0, 2, "Hold:");
         mvaddstr(0, MatrixEndX + 4, "Next:");
 
-        attron(COLOR_PAIR(PAIR_BORDER));
-        mvaddstr(1, 0, singleVertical.c_str());
-        mvaddstr(5, 0, singleVertical.c_str());
-
-        mvaddstr(1, MatrixEndX + 2, singleVertical.c_str());
-        mvaddstr(3 * NextPiecesLen + 2, MatrixEndX + 2, singleVertical.c_str());
-        for (int y = 1; y < 5; ++y)
-            mvaddstr(y, 0, "  ");
-        for (int y = 1; y < 3 * NextPiecesLen + 2; ++y)
-            mvaddstr(y, MatrixEndX + 10, "  ");
-
-        const std::string verticalBorder = std::string(Width * 2 + 4, ' ');
-        mvaddstr(Height, LeftPad, verticalBorder.c_str());
-        for (int y = 0; y < Height; ++y) {
-            mvaddstr(y, LeftPad, "  ");
-            mvaddstr(y, MatrixEndX, "  ");
-        }
+        setcol(PAIR_BORDER);
+        addborder(RectWH(2, 2, 4 * 2, 3));
+        addborder(RectWH(MatrixEndX + 2, 2,
+                         4 * 2, 3 * NextPiecesLen));
+        addline(Height, LeftPad, Width * 2 + 4);
+        addvline(0, LeftPad, Height);
+        addvline(0, MatrixEndX, Height);
     }
     void DrawMatrix() {
         move(0, LeftPad);
@@ -632,7 +549,7 @@ public:
             move(Height - y - 1, MatrixStartX);
             for (int x = 0; x < Width; ++x) {
                 auto col = game.Matrix(x, y);
-                coladdstr(col ? col : (uint8_t)(x % 2 ? PAIR_BOARD0 : PAIR_BOARD1), "  ");
+                coladdstr(col ? col : (uint8_t)PAIR_BOARD, "  ");
             }
         }
     }
@@ -642,7 +559,7 @@ public:
     }
 
     void DrawInfo() {
-        attron(COLOR_PAIR(PAIR_TEXT));
+        setcol(PAIR_TEXT);
         constexpr int x = MatrixEndX + 3;
         DrawVal(Height - 4, 1, "Level:", game.Level());
         DrawVal(Height - 2, 1, "Goal:", game.GoalLines());
@@ -655,29 +572,28 @@ public:
             DrawPiece(2 + i * 3, MatrixEndX + 2, randgen.NextPiece(i));
         }
     }
-    const std::string pieceBgVertical = std::string(8, ' ');
     void DrawPiece(int y, int x, Piece p) {
-        attron(COLOR_PAIR(PAIR_BG));
-        for (int i = 0; i < 3; ++i) {
-            mvaddstr(y + i, x, pieceBgVertical.c_str());
-        }
-        attron(COLOR_PAIR(p + 1));
+        colfill(PAIR_BG, RectWH(x, y, 8, 3));
+        setcol(p + 1);
         for (int i = 0; i < 4; ++i) {
             auto pt = PieceRotations[p][0][i];
-            mvaddstr(3 - pt.y + y, pt.x * 2 + x, "  ");
+            addblock(3 - pt.y + y, pt.x * 2 + x);
         }
     }
+    inline void DrawBlock(Point pt) {
+        addblock(Height - pt.y - 1, pt.x * 2 + LeftPad + 2);
+    }
     void DrawPlayer() {
-        attron(COLOR_PAIR(player.GetPiece() + 1));
+        setcol(player.GetPieceType() + 1);
         for (auto pt : player.GetPoints()) {
-            mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
+            DrawBlock(pt);
         }
     }
 
     void DrawGhostPiece() {
-        attron(COLOR_PAIR(PAIR_GHOST_PIECE));
+        setcol(PAIR_GHOST_PIECE);
         for (auto pt : player.GetGhostPoints()) {
-            mvaddstr(Height - pt.y - 1, pt.x * 2 + LeftPad + 2, "  ");
+            DrawBlock(pt);
         }
     }
 
@@ -688,56 +604,43 @@ public:
         DrawGhostPiece();
         DrawPlayer();
     }
-    void DrawPause() {
+    inline void DrawPause() {
         DrawScreenBase("Paused", true);
     }
 
-    void DrawEndScreen() {
-        DrawScreenBase(game.HasHighscore() ? "HIGH SCORE" : "GAME OVER", false);
+    inline void DrawEndScreen() {
+        DrawScreenBase(game.HasHighscore() ?
+                           "HIGH SCORE" :
+                           "GAME OVER",
+                       false);
     }
+
 private:
     void DrawScreenBase(std::string title, bool isPause) {
-        const std::string verticalBar = std::string(Width * 2, ' ');
-        DrawAtMiddle(PAIR_BORDER, 3, verticalBar);
-        for (int i = 4; i < 10; ++i)
-            DrawAtMiddle(PAIR_TEXT, i, verticalBar);
-
-        DrawAtMiddle(PAIR_BORDER, 10, verticalBar);
-        DrawAtMiddle(PAIR_TEXT, 5, title);
-        DrawAtMiddle(PAIR_TEXT, 7, isPause ?
-                     "Quit      Resume" :
-                     "Quit      Replay");
-        DrawAtMiddle(PAIR_TEXT, 8, "  Q          R  ");
+        addbox(PAIR_BORDER, PAIR_TEXT,
+               RectWH(MatrixStartX, 4, Width * 2, 6));
+        setcol(PAIR_TEXT);
+        DrawAtMiddle(5, title);
+        DrawAtMiddle(7, isPause ?
+                            "Quit      Resume" :
+                            "Quit      Replay");
+        DrawAtMiddle(8, "  Q          R  ");
     }
 
-    void DrawAtMiddle(short color, int y, std::string s) {
-        mvcoladdstr(y, MatrixStartX + Width - (s.size() / 2), color, s.c_str());
+    inline void DrawAtMiddle(int y, std::string s) {
+        mvaddstr(y, MatrixStartX + Width - (s.size() / 2), s.c_str());
     }
 } graphics;
 
-/* TODO:
-   - Windows support
- */
-const std::string HighscoresFile = "highscores";
-void writeHighscore() {
-    std::ofstream f(HighscoresFile);
-    f << game.Highscore() << "\n";
-}
 int main() {
-    //generateTable();
-    std::ifstream f(HighscoresFile);
-    int fileHighscore;
-    f >> fileHighscore;
-    game.SetHighscore(fileHighscore);
-    f.close();
-
     signal(SIGINT, [](int) { game.End(); exit(0); });
     atexit([] { game.End(); });
     game.Init([] {
-            graphics.DrawPause();
-            keyChoice('q', [] { writeHighscore(); exit(0); },
-                      'r', [] { /* don't do anything */ });
-        });
+        graphics.DrawPause();
+        keyChoice('q', [] { exit(0); },
+                  'r', [] { /* don't do anything */ });
+    });
+
     for (;;) {
         while (game.Running()) {
             player.Input();
@@ -746,7 +649,7 @@ int main() {
             waitAFrame();
         }
         graphics.DrawEndScreen();
-        keyChoice('q', [] { writeHighscore(); exit(0); },
+        keyChoice('q', [] { exit(0); },
                   'r', [] {
                       randgen.Restart();
                       game.Restart();

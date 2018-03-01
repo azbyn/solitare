@@ -1,76 +1,99 @@
 #pragma once
 #include "point.h"
+#include "rect.h"
 
 #include <curses.h>
 
-#if defined _WIN32 || defined _WIN64
-#define __WINDOWS__
-#endif
-
 namespace azbyn {
+
 namespace prophanity {
 constexpr unsigned COL_BRIGHT = 1 << 3;
 enum Color : short {
-    //clang-format off
+    // clang-format off
     //Color,         //irgb
-    COL_BLACK = COLOR_BLACK,
-    COL_DARK_BLUE = COLOR_BLUE,
-    COL_DARK_GREEN = COLOR_GREEN,
-    COL_DARK_CYAN = COLOR_CYAN,
-    COL_DARK_RED = COLOR_RED,
+    COL_BLACK        = COLOR_BLACK,
+    COL_DARK_BLUE    = COLOR_BLUE,
+    COL_DARK_GREEN   = COLOR_GREEN,
+    COL_DARK_CYAN    = COLOR_CYAN,
+    COL_DARK_RED     = COLOR_RED,
     COL_DARK_MAGENTA = COLOR_MAGENTA,
-    COL_DARK_YELLOW = COLOR_YELLOW,
-    COL_LIGHT_GRAY = COLOR_WHITE,
-    COL_DARK_GRAY = COL_BRIGHT | COLOR_BLACK,
-    COL_BLUE = COL_BRIGHT | COLOR_BLUE,
-    COL_GREEN = COL_BRIGHT | COLOR_GREEN,
-    COL_CYAN = COL_BRIGHT | COLOR_CYAN,
-    COL_RED = COL_BRIGHT | COLOR_RED,
-    COL_MAGENTA = COL_BRIGHT | COLOR_MAGENTA,
-    COL_YELLOW = COL_BRIGHT | COLOR_YELLOW,
-    COL_WHITE = COL_BRIGHT | COLOR_WHITE,
-    //clang-format on
+    COL_DARK_YELLOW  = COLOR_YELLOW,
+    COL_LIGHT_GRAY   = COLOR_WHITE,
+    COL_DARK_GRAY    = COL_BRIGHT | COLOR_BLACK,
+    COL_BLUE         = COL_BRIGHT | COLOR_BLUE,
+    COL_GREEN        = COL_BRIGHT | COLOR_GREEN,
+    COL_CYAN         = COL_BRIGHT | COLOR_CYAN,
+    COL_RED          = COL_BRIGHT | COLOR_RED,
+    COL_MAGENTA      = COL_BRIGHT | COLOR_MAGENTA,
+    COL_YELLOW       = COL_BRIGHT | COLOR_YELLOW,
+    COL_WHITE        = COL_BRIGHT | COLOR_WHITE,
+    // clang-format on
     COL_DARK_WHITE = COL_LIGHT_GRAY,
     COL_LIGHT_BLACK = COL_DARK_GRAY,
-#ifdef __WINDOWS__
+#if defined _WIN32 || defined _WIN64
     COL_ORANGE = COL_DARK_YELLOW,
+#elif defined BASE16
+    COL_ORANGE = 16,
 #else
-    COL_ORANGE = 202
+    COL_ORANGE = 202,
 #endif
 };
-
+inline void setcol(short c) {
+    attron(COLOR_PAIR(c));
+}
 inline void coladdstr(short col, const char* str) {
-    attron(COLOR_PAIR(col));
+    setcol(col);
     addstr(str);
 }
 inline void mvcoladdstr(int y, int x, short col, const char* str) {
-    attron(COLOR_PAIR(col));
+    setcol(col);
     mvaddstr(y, x, str);
 }
 
-void drawBox(short outsideCol, short insideCol, int x0, int y0, int x1, int y1) {
-    attron(COLOR_PAIR(outsideCol));
-    mvhline(y0, x0, ' ', x1);
-    mvhline(y0 + y1, x0, ' ', x1);
+inline void addline(int y, int x, int len) {
+    mvhline(y, x, ' ', len);
+}
+inline void coladdline(short col, int y, int x, int len) {
+    setcol(col);
+    addline(y, x, len);
+}
+inline void addblock(int y, int x) {
+    mvhline(y, x, ' ', 2);
+}
+inline void coladdblock(short col, int y, int x) {
+    setcol(col);
+    addblock(y, x);
+}
+void fill(const Rect& r) {
+    for (int y = r.Y0(); y <= r.Y1(); ++y)
+        addline(y, r.X(), r.Width());
+}
+inline void colfill(short col, const Rect& r) {
+    setcol(col);
+    fill(r);
+}
+void addvline(int y, int x, int len) {
+    for (int i = y; i < y + len; ++i)
+        addblock(i, x);
+}
+inline void coladdvline(short col, int y, int x, int len) {
+    setcol(col);
+    addvline(y, x, len);
+}
+void addborder(const Rect& r) {
+    addline(r.Y0()-1, r.X0() -2, r.Width() + 4);
+    addline(r.Y1()+1, r.X0() -2, r.Width() + 4);
+    addvline(r.Y0(), r.X0() - 2, r.Height() + 1);
+    addvline(r.Y0(), r.X1() + 1, r.Height() + 1);
+}
+inline void coladdborder(short col, const Rect& r) {
+    setcol(col);
+    addborder(r);
+}
+void addbox(short borderCol, short insideCol, const Rect& r) {
+    coladdborder(borderCol, r);
+    colfill(insideCol, r);
+}
 
-    for (int i = y0 + 1; i < y0 + y1; ++i) {
-        attron(COLOR_PAIR(outsideCol));
-        mvhline(i, x0, ' ', 2);
-        mvhline(i, x0 + x1 - 2, ' ', 2);
-        attron(COLOR_PAIR(insideCol));
-        mvhline(i, x0 + 2, ' ', x1 - 4);
-    }
-}
-inline void drawBox(short outsideCol, short insideCol, Point p0, Point p1) {
-    drawBox(outsideCol, insideCol, p0.x, p0.y, p1.x, p1.y);
-}
-inline void drawLine(int y, int x, int len) {
-    mvhline(y,x,' ', len);
-}
-inline void drawBlock(int y, int x) {
-    mvhline(y,x,' ', 2);
-}
 } // namespace prophanity
 } // namespace azbyn
-
-#undef __WINDOWS__

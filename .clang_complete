@@ -5,3 +5,4 @@
 -Wno-unused-const-variable
 -std=c++11
 -Wpedantic
+-DBASE16=1

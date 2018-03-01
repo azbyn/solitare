@@ -646,7 +646,7 @@ public:
         constexpr int x = MatrixEndX + 3;
         DrawVal(Height - 4, 1, "Level:", game.Level());
         DrawVal(Height - 2, 1, "Goal:", game.GoalLines());
-        DrawVal(Height - 7, x, "Hiscore:", game.Highscore());
+        DrawVal(Height - 7, x, "Highscore:", game.Highscore());
         DrawVal(Height - 4, x, "Score:", game.Score());
         DrawVal(Height - 2, x, "Cleared Lines:", game.ClearedLines());
         if (player.GetHoldPiece() != -1)

@@ -6,7 +6,7 @@
 
 namespace azbyn {
 
-namespace prophanity {
+namespace profanity {
 constexpr unsigned COL_BRIGHT = 1 << 3;
 enum Color : short {
     // clang-format off

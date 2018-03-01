@@ -8,7 +8,7 @@ struct Point {
 
     constexpr Point() = default;
     constexpr Point(int x, int y)
-            : x(x), y(y) {}
+        : x(x), y(y) {}
     constexpr bool operator==(const Point& rhs) const {
         return x == rhs.x && y == rhs.y;
     }
@@ -21,10 +21,10 @@ struct Point {
     constexpr Point operator-(const Point& rhs) const {
         return Point(x - rhs.x, y - rhs.y);
     }
-    constexpr Point operator- () const {
+    constexpr Point operator-() const {
         return Point(-x, -y);
     }
-    constexpr Point operator+ () const {
+    constexpr Point operator+() const {
         return *this;
     }
     constexpr int RectArea() const {
@@ -37,7 +37,6 @@ struct Point {
         return x >= min.x && x < max.x &&
                y >= min.y && y < max.y;
     }
-
 
     Point& operator+=(const Point& rhs) {
         x += rhs.x;

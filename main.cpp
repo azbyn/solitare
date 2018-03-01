@@ -3,8 +3,8 @@ using azbyn::Point;
 #include "misc.h"
 using azbyn::Callback;
 using azbyn::string_format;
-#include "prophanity.h"
-using namespace azbyn::prophanity;
+#include "profanity.h"
+using namespace azbyn::profanity;
 using azbyn::Rect;
 using azbyn::Rect4;
 using azbyn::RectWH;

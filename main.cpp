@@ -6,8 +6,6 @@ using azbyn::string_format;
 #include "profanity.h"
 using namespace azbyn::profanity;
 using azbyn::Rect;
-using azbyn::Rect4;
-using azbyn::RectWH;
 
 #include <algorithm>
 #include <array>
@@ -536,8 +534,8 @@ public:
         mvaddstr(0, MatrixEndX + 4, "Next:");
 
         setcol(PAIR_BORDER);
-        addborder(RectWH(2, 2, 4 * 2, 3));
-        addborder(RectWH(MatrixEndX + 2, 2,
+        addborder(Rect(2, 2, 4 * 2, 3));
+        addborder(Rect(MatrixEndX + 2, 2,
                          4 * 2, 3 * NextPiecesLen));
         addline(Height, LeftPad, Width * 2 + 4);
         addvline(0, LeftPad, Height);
@@ -573,7 +571,7 @@ public:
         }
     }
     void DrawPiece(int y, int x, Piece p) {
-        colfill(PAIR_BG, RectWH(x, y, 8, 3));
+        colfill(PAIR_BG, Rect(x, y, 8, 3));
         setcol(p + 1);
         for (int i = 0; i < 4; ++i) {
             auto pt = PieceRotations[p][0][i];
@@ -618,7 +616,7 @@ public:
 private:
     void DrawScreenBase(std::string title, bool isPause) {
         addbox(PAIR_BORDER, PAIR_TEXT,
-               RectWH(MatrixStartX, 4, Width * 2, 6));
+               Rect(MatrixStartX, 4, Width * 2, 6));
         setcol(PAIR_TEXT);
         DrawAtMiddle(5, title);
         DrawAtMiddle(7, isPause ?

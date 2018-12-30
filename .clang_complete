@@ -3,6 +3,6 @@
 -Wextra
 -Wunused-const-variable
 -Wno-unused-const-variable
--std=c++11
+-std=c++17
 -Wpedantic
 -DBASE16=1

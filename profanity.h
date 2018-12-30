@@ -50,8 +50,12 @@ inline void mvcoladdstr(int y, int x, short col, const char* str) {
     mvaddstr(y, x, str);
 }
 
+
 inline void addline(int y, int x, int len) {
     mvhline(y, x, ' ', len);
+}
+inline void caddline(chtype c, int y, int x, int len) {
+    mvhline(y, x, c, len);
 }
 inline void coladdline(short col, int y, int x, int len) {
     setcol(col);
@@ -71,6 +75,15 @@ void fill(Rect r) {
 inline void colfill(short col, Rect r) {
     setcol(col);
     fill(r);
+}
+
+void cfill(chtype c, Rect r) {
+    for (int y = r.Y0(); y <= r.Y1(); ++y)
+        caddline(c, y, r.x, r.width);
+}
+inline void ccolfill(chtype c, short col, Rect r) {
+    setcol(col);
+    cfill(c, r);
 }
 void addvline(int y, int x, int len) {
     for (int i = y; i < y + len; ++i)

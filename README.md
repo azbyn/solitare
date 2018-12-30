@@ -1,2 +1,2 @@
-# Tetris
-My implementation of Tetris for Unix
+# Solitare
+My implementation of Solitare for Unix

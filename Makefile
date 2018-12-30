@@ -1,7 +1,7 @@
-CXX := cc_args g++
+CXX := clang++
 SRC_DIR := .
 BUILD_DIR := build
-TARGET := tetris
+TARGET := solitare
 
 SRCS := $(shell find $(SRC_DIR) -name *.cpp)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
@@ -12,7 +12,7 @@ DEPS := $(OBJS:.o=.d)
 
 
 CPPFLAGS := $(INC_FLAGS)
-CPPFLAGS += -Wall -Wextra -g -pg -std=c++11 -Wpedantic \
+CPPFLAGS += -Wall -Wextra -g -pg -std=c++17 -Wpedantic \
 -Wno-unused-const-variable
 #CPPFLAGS += -g -std=c++17 -Weverything \
 -Wno-c++98-compat \

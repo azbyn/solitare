@@ -1,658 +1,477 @@
-#include "point.h"
-using azbyn::Point;
-#include "misc.h"
-using azbyn::Callback;
-using azbyn::string_format;
 #include "profanity.h"
-using namespace azbyn::profanity;
-using azbyn::Rect;
+#include "misc.h"
+#include "rect.h"
+#include "point.h"
+#include "full_size_cards.h"
+#include "game.h"
 
-#include <algorithm>
+using namespace azbyn::profanity;
+using azbyn::string_format;
+using azbyn::Rect;
+using azbyn::Point;
+
+
+#include <curses.h>
+
+#include <vector>
 #include <array>
-#include <atomic>
-#include <chrono>
-#include <csignal>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <exception>
-#include <fstream>
-#include <random>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <iostream>
+#include <algorithm>
 
-enum Piece {
-    TP_EMPTY = -1,
-    TP_I,
-    TP_L,
-    TP_J,
-    TP_O,
-    TP_S,
-    TP_T,
-    TP_Z,
-    TP_LEN
-};
 
-//generated using generate-table.py
-using PiecePoints = std::array<Point, 4>;
-constexpr PiecePoints PieceRotations[TP_LEN][4] = {
-    {{{{0, 2}, {1, 2}, {2, 2}, {3, 2}}},
-     {{{2, 3}, {2, 2}, {2, 1}, {2, 0}}},
-     {{{0, 1}, {1, 1}, {2, 1}, {3, 1}}},
-     {{{1, 3}, {1, 2}, {1, 1}, {1, 0}}}},
-    {{{{0, 3}, {0, 2}, {1, 2}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {1, 1}, {2, 3}}},
-     {{{0, 2}, {1, 2}, {2, 2}, {2, 1}}},
-     {{{0, 1}, {1, 3}, {1, 2}, {1, 1}}}},
-    {{{{0, 2}, {1, 2}, {2, 3}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {1, 1}, {2, 1}}},
-     {{{0, 2}, {0, 1}, {1, 2}, {2, 2}}},
-     {{{0, 3}, {1, 3}, {1, 2}, {1, 1}}}},
-    {{{{1, 3}, {1, 2}, {2, 3}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {2, 3}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {2, 3}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {2, 3}, {2, 2}}}},
-    {{{{0, 2}, {1, 3}, {1, 2}, {2, 3}}},
-     {{{1, 3}, {1, 2}, {2, 2}, {2, 1}}},
-     {{{0, 1}, {1, 2}, {1, 1}, {2, 2}}},
-     {{{0, 3}, {0, 2}, {1, 2}, {1, 1}}}},
-    {{{{0, 2}, {1, 3}, {1, 2}, {2, 2}}},
-     {{{1, 3}, {1, 2}, {1, 1}, {2, 2}}},
-     {{{0, 2}, {1, 2}, {1, 1}, {2, 2}}},
-     {{{0, 2}, {1, 3}, {1, 2}, {1, 1}}}},
-    {{{{0, 3}, {1, 3}, {1, 2}, {2, 2}}},
-     {{{1, 2}, {1, 1}, {2, 3}, {2, 2}}},
-     {{{0, 2}, {1, 2}, {1, 1}, {2, 1}}},
-     {{{0, 2}, {0, 1}, {1, 3}, {1, 2}}}},
-};
-constexpr float _speeds[] = {
-    1.0,
-    0.793,
-    0.618,
-    0.473,
-    0.355,
-    0.262,
-    0.190,
-    0.135,
-    0.094,
-    0.064,
-    0.043,
-    0.028,
-    0.018,
-    0.011,
-    0.007,
-};
-constexpr float speed(int level) { return level > 14 ? .007 : _speeds[level]; }
+struct Player {
+    Game& game;
+    Point curr = Point(0, -1);
+    Point selected = Point(-1, -1);
 
-constexpr int Width = 10;
-constexpr int Height = 20;
-constexpr int MatrixSizeY = 30;
-constexpr int NextPiecesLen = 3;
+    Player(Game& game) : game(game) {}
 
-void waitAFrame() {
-    std::this_thread::sleep_for(std::chrono::milliseconds(16));
-}
-void keyChoice(int a, Callback cbA, int b, Callback cbB) {
-    for (;;) {
-        auto c = tolower(getch());
-        if (c == a) {
-            cbA();
+    void checkVertBounds(int y = 0) {
+        if (curr.y <= -1) {
+            curr.y = -1;
             return;
         }
-        if (c == b) {
-            cbB();
+        auto& pile = game.piles[curr.x];
+        if (curr.y < (int)pile.shownPoint && y < 0) {
+            curr.y = -1;
             return;
         }
-        waitAFrame();
-    }
-}
-
-class RandomGenerator {
-    std::array<Piece, TP_LEN> bags[2] = {};
-    int bagIndex = 0;
-    std::random_device rd;
-    std::mt19937 gen;
-    int index = 0;
-
-public:
-    RandomGenerator() : rd(), gen(rd()) {
-        for (int i = 0; i < TP_LEN; ++i) {
-            bags[0][i] = (Piece)i;
-            bags[1][i] = (Piece)i;
+        auto sz = pile.cards.size();
+        if (sz == 0) {
+            if (curr.y > 0) curr.y = 0;
         }
-        Restart();
-    }
-
-    Piece operator()() {
-        if (index >= TP_LEN) {
-            std::shuffle(bags[bagIndex].begin(), bags[bagIndex].end(), gen);
-            bagIndex = !bagIndex;
-            index = 0;
-        }
-        return bags[bagIndex][index++];
-    }
-    Piece NextPiece(int i) const {
-        int ix = index + i;
-        if (ix >= TP_LEN)
-            return bags[!bagIndex][ix - TP_LEN];
-        return bags[bagIndex][ix];
-    }
-    void Restart() {
-        bagIndex = 0;
-        index = 0;
-        std::shuffle(bags[0].begin(), bags[0].end(), gen);
-        std::shuffle(bags[1].begin(), bags[1].end(), gen);
-    }
-
-} randgen;
-
-constexpr char HighscoresFile[] = "highscores";
-
-class Game {
-    int highscore = 0;
-    int score = 0;
-    int clearedLinesThisLevel = 0;
-    int totalClearedLines = 0;
-    int level = 0;
-    uint8_t matrix[MatrixSizeY * Width];
-    bool running = true;
-    Callback pause;
-    int RequiredLines() const { return (level + 1) * 5; }
-
-    void ClearLine(int y) {
-        ++totalClearedLines;
-        if (++clearedLinesThisLevel >= RequiredLines()) {
-            ++level;
-            clearedLinesThisLevel = 0;
-        }
-        memcpy(matrix + y * Width,
-               matrix + (y + 1) * Width,
-               sizeof(*matrix) * Width * (MatrixSizeY - y - 1));
-        memset(matrix + (MatrixSizeY - 1) * Width, 0, Width);
-    }
-    void ReadHighscore() {
-        std::ifstream f(HighscoresFile);
-        f >> highscore;
-    }
-    void WriteHighscore() {
-        std::ofstream f(HighscoresFile);
-        f << highscore << "\n";
-    }
-
-public:
-    Game() {
-        ReadHighscore();
-        Restart();
-    }
-    ~Game() { WriteHighscore(); }
-    void Restart() {
-        score = 0;
-        clearedLinesThisLevel = 0;
-        totalClearedLines = 0;
-        level = 0;
-        memset(matrix, 0, sizeof(matrix));
-        running = true;
-    }
-
-    void IncreaseScore(int x) {
-        score += x;
-        if (highscore < score) {
-            highscore = score;
+        else {
+            if (curr.y < (int)pile.shownPoint) curr.y = pile.shownPoint;
+            if (curr.y >= (int)sz) curr.y = sz - 1;
         }
     }
-    inline void Init(Callback pause) { this->pause = pause; }
-    inline void End() { running = false; }
-    inline void Pause() { pause(); }
+    void moveHor(int x) {
+        curr.x += x;
+        if (curr.x < 0) curr.x = 0;
+        if (curr.x > 6) curr.x = 6;
+        checkVertBounds();
+    }
+    void moveVert(int y) {
+        curr.y += y;
+        checkVertBounds(y);
+    }
 
-    inline uint8_t& Matrix(Point p) { return matrix[p.y * Width + p.x]; }
-    inline uint8_t& Matrix(int x, int y) { return matrix[y * Width + x]; }
-    inline float Speed() const { return speed(level); }
-    inline int ClearedLines() const { return totalClearedLines; }
-    inline int GoalLines() const { return RequiredLines() - clearedLinesThisLevel; }
-    inline int Score() const { return score; }
-    inline int Highscore() const { return highscore; }
-    inline bool HasHighscore() const { return score == highscore; }
-    inline int Level() const { return level + 1; }
-    inline bool Running() const { return running; }
-    void CheckClearLines() {
-        unsigned y = 0;
-        int clearedLines = 0;
-        while (y < MatrixSizeY) {
-            for (unsigned x = 0; x < Width; ++x) {
-                if (!Matrix(x, y))
-                    goto nextLine;
+    void deselect() {
+        selected = Point(-1, -1);
+    }
+    // returns emptyCard if selected more than 1 card
+    // we already know something's selected so no need to check
+    Card getSingleCard() const {
+        if (selected.y == -1) {
+            if (selected.x == 1) { // stockShown
+                return game.stockTop();
             }
-            ClearLine(y);
-            ++clearedLines;
-            continue; //redo line
-        nextLine:
-            ++y;
+            //althrough the fundation selects one card, it's not valid for our purpose (adding to the fundation)
+            return Card();
         }
-        switch (clearedLines) {
-        case 1: IncreaseScore(Level() * 40); break;
-        case 2: IncreaseScore(Level() * 100); break;
-        case 3: IncreaseScore(Level() * 300); break;
-        case 4: IncreaseScore(Level() * 1200); break;
+        else {
+            auto& pileCards = game.piles[selected.x].cards;
+            if (pileCards.size() - selected.y == 1) return pileCards.back();
+            return Card();
         }
     }
-} game;
-
-class Player {
-    PiecePoints points;
-    PiecePoints ghostPoints;
-    Point pos;
-    int rotation;
-    Piece pieceType;
-    std::chrono::time_point<std::chrono::system_clock> lastDrop;
-    Piece holdPiece = TP_EMPTY;
-    bool lastWasHold = false;
-
-    void UpdatePtsBase(PiecePoints& pts, Point p) const {
-        for (int i = 0; i < 4; ++i) {
-            pts[i] = PieceRotations[pieceType][rotation][i] + p;
+    void popSingleCard() {
+        if (selected.y == -1 && selected.x == 1) { // stockShown
+            game.popStockTop();
+        }
+        else {
+            game.piles[selected.x].popBack();
         }
     }
-    void UpdatePoints() { UpdatePtsBase(points, pos); }
-    void UpdateGhostPoints() {
-        Point p = pos;
-        for (;;) {
-            for (int i = 0; i < 4; ++i) {
-                ghostPoints[i] = PieceRotations[pieceType][rotation][i] + p;
-                if (game.Matrix(ghostPoints[i]) || ghostPoints[i].y < 0) {
-                    ++p.y;
-                    UpdatePtsBase(ghostPoints, p);
-                    return;
+    void action() {
+        auto x = curr.x;
+        if (curr.y == -1) {
+            if (selected.x == -1) { //aka nothing selected
+                if (x == 0) { // stock
+                    game.incrementStock();
                 }
+                else if (x == 1) { // waste
+                    if (game.stockTop().type != 0)
+                        selected = curr;
+                }
+                else if (x >= 3) {
+                    auto& topPile = game.topPiles[curr.x - 3];
+                    if (topPile.type != 0) selected = curr;
+                }
+            } else {
+                if (x >= 3) {
+                    auto& topPile = game.topPiles[curr.x - 3];
+                    auto card = getSingleCard();
+                    if (card.type == topPile.type+1 && (card.type == 1 || card.suit == topPile.suit)) {
+                        popSingleCard();
+                        topPile = card;
+                    } else return;
+                }
+                deselect();
             }
-            --p.y;
-        }
-    }
-    void Reset(Piece p) {
-        if (p == TP_I && game.Matrix(4, Height - 1)) game.End();
-        pos = Point(3, Height - 3);
-        rotation = 0;
-        pieceType = p;
-        UpdatePoints();
-        for (auto pt : points) {
-            if (game.Matrix(pt)) {
-                for (auto p : points) {
-                    if (p.y >= Height) {
-                        ++pos.y; //just visual
-                        UpdatePoints();
-                        game.End();
+        } else {
+            auto& pile = game.piles[x];
+            if (selected.x == -1) {
+                if (pile.cards.size() != 0)
+                    selected = curr;
+
+            } else {
+                if (selected.y == -1) {
+                    if (selected.x == 1) {// waste
+                        auto card = game.stockTop();
+                        if (pile.append(card))
+                            game.popStockTop();
+                        else return;
+                    } else { //must be fundation
+                        auto& topPile = game.topPiles[selected.x-3];
+                        if (pile.append(topPile))
+                            --topPile.type;
+                        else return;
+                    }
+                } else {
+                    if (selected.x == x) {
+                        if (selected.y == curr.y) deselect();
+                        else selected = curr;
                         return;
                     }
+                    auto& selectedPile = game.piles[selected.x];
+                    auto end = selectedPile.end();
+                    auto sel = selectedPile.begin() + selected.y;
+
+                    if (pile.append(sel, end))
+                        selectedPile.erase(sel, end);
+                    else return;
                 }
+                deselect();
             }
         }
-        UpdateGhostPoints();
-        ResetDrop();
     }
 
-public:
-    Player(Piece p) { Reset(p); }
-    Player() : Player(randgen()) {}
-    void Restart() {
-        Reset(randgen());
-        holdPiece = TP_EMPTY;
-        lastWasHold = false;
-    }
-    inline const PiecePoints& GetPoints() const { return points; }
-    inline const PiecePoints& GetGhostPoints() const { return ghostPoints; }
-    inline Piece GetPieceType() const { return pieceType; }
-    inline Piece GetHoldPiece() const { return holdPiece; }
-    void Hold() {
-        if (holdPiece == TP_EMPTY) {
-            holdPiece = pieceType;
-            Reset(randgen());
-        }
-        else if (!lastWasHold) {
-            Piece tmp = pieceType;
-            Reset(holdPiece);
-            holdPiece = tmp;
-        }
-        lastWasHold = true;
-    }
-
-    void Move(int x) {
-        pos.x += x;
-        PiecePoints bk = points;
-        UpdatePoints();
-        for (auto& pt : points) {
-            if (game.Matrix(pt) != 0 || pt.x < 0 || pt.x >= Width) {
-                pos.x -= x;
-                points = bk;
-                return;
-            }
-        }
-        UpdateGhostPoints();
-    }
-    void Fall() {
-        --pos.y;
-        UpdatePoints();
-        for (auto pt : points) {
-            if (game.Matrix(pt) || pt.y < 0) {
-                ++pos.y;
-                UpdatePoints();
-                PlaceOnBoard();
-                return;
-            }
-        }
-    }
-    void SoftDrop() {
-        game.IncreaseScore(1);
-        ResetDrop();
-        Fall();
-    }
-    void HardDrop() {
-        //if (pos.y == Height - 2) return;
-        for (;;) {
-            --pos.y;
-            UpdatePoints();
-            for (auto pt : points) {
-                if (game.Matrix(pt) || pt.y < 0) {
-                    ++pos.y;
-                    UpdatePoints();
-                    PlaceOnBoard();
-                    return;
-                }
-            }
-            game.IncreaseScore(1);
-        }
-    }
-    void Rotate(int i) {
-        auto tmprot = rotation;
-        rotation += i;
-        if (rotation < 0)
-            rotation = 3;
-        else if (rotation > 3)
-            rotation = 0;
-        if (CheckRotation())
-            return;
-        // wall kick right
-        auto tmpx = pos.x;
-        ++pos.x;
-        if (CheckRotation())
-            return;
-        // wall kick left
-        pos.x = tmpx - 1;
-        if (CheckRotation())
-            return;
-        // special cases for I
-        if (pieceType == TP_I) {
-            pos.x = tmpx + 2;
-            if (CheckRotation())
-                return;
-            pos.x = tmpx - 2;
-            if (CheckRotation())
-                return;
-        }
-        // can't wall kick
-        pos.x = tmpx;
-        rotation = tmprot;
-        UpdateGhostPoints();
-        UpdatePoints();
-    }
-
-private:
-    bool CheckRotation() {
-        UpdatePoints();
-        for (auto pt : points) {
-            if (game.Matrix(pt) || pt.x < 0 || pt.x >= Width) {
-                return false;
-            }
-        }
-        UpdateGhostPoints();
-        return true;
-    }
-
-public:
-    void Input() {
+    void input() {
         switch (tolower(getch())) {
-            // case ERR: continue;
-        case 'z':
-        case 'a':
-            Rotate(-1);
-            break;
-        case KEY_UP:
-        case 's':
-        case 'x':
-            Rotate(1);
+        case ' ':
+            action();
             break;
         case 'c':
-        case 'd':
-            Hold();
+            deselect();
             break;
-        case KEY_F(1):
+        case 's':
+            moveVert(15);//a big number so it moves to the bottom
+            break;
+        case 'w':
+            moveVert(-15);//a big number so it moves to the top
+            moveVert(1);
+            break;
         case 'q':
-        case 27:
-        case 'p':
-            game.Pause();
+            endwin();
+            exit(0);
             break;
-        case ' ':
-            HardDrop();
+        case KEY_UP:
+            moveVert(-1);
             break;
         case KEY_DOWN:
-            SoftDrop();
+            moveVert(1);
             break;
         case KEY_LEFT:
-            Move(-1);
+            moveHor(-1);
             break;
         case KEY_RIGHT:
-            Move(1);
+            moveHor(1);
             break;
         }
     }
+};
 
-    void PlaceOnBoard(Piece pc) {
-        for (auto pt : points) {
-            game.Matrix(pt) = pieceType + 1;
-        }
-        game.CheckClearLines();
-        Reset(pc);
-        lastWasHold = false;
-    }
-    inline void PlaceOnBoard() { PlaceOnBoard(randgen()); }
-
-    inline void ResetDrop() {
-        lastDrop = std::chrono::system_clock::now();
-    }
-    void Gravity() {
-        auto now = std::chrono::system_clock::now();
-        std::chrono::duration<float> d = now - lastDrop;
-        if (d.count() >= game.Speed()) {
-            lastDrop = now;
-            Fall();
-        }
-    }
-} player;
-
-class Graphics {
+struct Graphics {
     enum Pairs {
-        PAIR_BG = TP_LEN + 1,
-        PAIR_BOARD,
-        PAIR_BORDER,
-        PAIR_TEXT,
-        PAIR_GHOST_PIECE,
+        PAIR_BG = 1,
+        PAIR_CARD_RED,
+        PAIR_CARD_BLACK,
+        PAIR_CARD_BACK,
+        PAIR_CURSOR,
+        PAIR_SELECTED,
     };
 
-    void InitColors() {
+    void initColors() {
+        //std::cout <<"INIT COLS\n";
         start_color();
-        constexpr short bgColor = COL_BLACK;
-        auto addPiece = [](Piece p, short fg) { init_pair(p + 1, fg, fg); };
-        auto addColor = [](int i, short col) { init_pair(i, col, col); };
-        addPiece(TP_I, COL_CYAN);
-        addPiece(TP_L, COL_BLUE);
-        addPiece(TP_J, COL_ORANGE);
-        addPiece(TP_O, COL_YELLOW);
-        addPiece(TP_S, COL_GREEN);
-        addPiece(TP_T, COL_MAGENTA);
-        addPiece(TP_Z, COL_RED);
-        addColor(PAIR_BG, bgColor);
-        addColor(PAIR_BOARD, COL_BLACK);
+        auto cardFront = COL_WHITE;//COL_DARK_WHITE;
+        auto boardBg = COL_GREEN;
 
-        bool isTerm256 = std::string(getenv("TERM")).find("256") != std::string::npos;
-
-        addColor(PAIR_GHOST_PIECE, BASE16 ? 18 : (isTerm256 ? 236 : COL_DARK_GRAY));
-        addColor(PAIR_BORDER, isTerm256 ? COL_DARK_GRAY : COL_LIGHT_GRAY);
-        init_pair(PAIR_TEXT, COL_DARK_WHITE, bgColor);
+        init_pair(PAIR_BG, COL_BLACK, boardBg);
+        init_pair(PAIR_CARD_RED, COL_RED, cardFront);
+        init_pair(PAIR_CARD_BLACK, COL_BLACK, cardFront);
+        init_pair(PAIR_CARD_BACK, COL_LIGHT_GRAY, COL_BLUE);
+        init_pair(PAIR_CURSOR, COL_WHITE, boardBg);
+        init_pair(PAIR_SELECTED, COL_DARK_WHITE, boardBg);
     }
 
-public:
-    Graphics() {
-        initscr(); /* initialize the curses library */
-        keypad(stdscr, true); /* enable keyboard mapping */
-        nonl(); /* tell curses not to do NL->CR/NL on output */
-        cbreak(); /* take input chars one at a time, no wait for \n */
+    constexpr static int Width = 100;
+    constexpr static int Height = 40;
+
+
+    bool smallMode;
+    Point cardSize = smallMode ? Point(9, 6) : Point(11, 7);
+    Graphics(bool smallMode) : smallMode(smallMode) {
+        setlocale(LC_ALL, "");
+        initscr(); // initialize the curses library
+        keypad(stdscr, true); // enable keyboard mapping
+        nonl(); // tell curses not to do NL->CR/NL on output
+        cbreak(); // take input chars one at a time, no wait for \n
         noecho();
-        nodelay(stdscr, true);
+        //nodelay(stdscr, true);
         meta(stdscr, true);
         curs_set(0);
-        if (COLS < 2 * Width + 15 + LeftPad || LINES < Height + 1) {
+        /*
+        if (COLS < Width || LINES < Height) {
             throw std::runtime_error(
                 string_format("terminal too small %dx%d", COLS, LINES));
-        }
+                }*/
         if (has_colors())
-            InitColors();
-        DrawBegin();
+            initColors();
+        drawBegin();
     }
-    void Restart() {
-        clear();
-        DrawBegin();
-    }
-
     ~Graphics() {
         endwin();
     }
-    static constexpr int LeftPad = 10;
-    static constexpr int MatrixStartX = LeftPad + 2;
-    static constexpr int MatrixEndX = MatrixStartX + 2 * Width;
-    void DrawBegin() {
-        setcol(PAIR_TEXT);
-        mvaddstr(0, 2, "Hold:");
-        mvaddstr(0, MatrixEndX + 4, "Next:");
 
-        setcol(PAIR_BORDER);
-        addborder(Rect(2, 2, 4 * 2, 3));
-        addborder(Rect(MatrixEndX + 2, 2,
-                         4 * 2, 3 * NextPiecesLen));
-        addline(Height, LeftPad, Width * 2 + 4);
-        addvline(0, LeftPad, Height);
-        addvline(0, MatrixEndX, Height);
+    template<const full_size_cards::T& s, char lastByte>
+    static void printCard(int y, int x) {
+        using namespace full_size_cards;
+        mvaddstr(y + 0, x, (replaceX<s, 0, lastByte>().data()));
+        mvaddstr(y + 1, x, (replaceX<s, 1, lastByte>().data()));
+        mvaddstr(y + 2, x, (replaceX<s, 2, lastByte>().data()));
+        mvaddstr(y + 3, x, (replaceX<s, 3, lastByte>().data()));
+        mvaddstr(y + 4, x, (replaceX<s, 4, lastByte>().data()));
+        mvaddstr(y + 5, x, (replaceX<s, 5, lastByte>().data()));
+        mvaddstr(y + 6, x, (replaceX<s, 6, lastByte>().data()));
+        setcol(PAIR_CARD_BLACK);
+        constexpr auto top = replaceX<s, 0, lastByte>();
+        // I hate the 10 card
+        if (top[1] == '0') {
+            mvaddstr(y+0, x+2, "───────┐");
+            mvaddstr(y+6, x+1, "└───────");
+        } else {
+            mvaddstr(y+0, x+1, "┌───────┐");
+            mvaddstr(y+6, x+1, "└───────┘");
+        }
+        for (int i = 1; i < 6; ++i) {
+            mvaddstr(y+i, x+1, "│");
+            mvaddstr(y+i, x+9, "│");
+        }
     }
-    void DrawMatrix() {
-        move(0, LeftPad);
-        for (int y = 0; y < Height; ++y) {
-            move(Height - y - 1, MatrixStartX);
-            for (int x = 0; x < Width; ++x) {
-                auto col = game.Matrix(x, y);
-                coladdstr(col ? col : (uint8_t)PAIR_BOARD, "  ");
+    template<const full_size_cards::T& s>
+    static void printCard(int y, int x, Suit suit) {
+        switch (suit) {
+        case Suit::Spades:   printCard<s, (char) 0xA0>(y, x); break;
+        case Suit::Hearts:   printCard<s, (char) 0xA5>(y, x); break;
+        case Suit::Clubs:    printCard<s, (char) 0xA3>(y, x); break;
+        case Suit::Diamonds: printCard<s, (char) 0xA6>(y, x); break;
+        default: break;
+        }
+    }
+    static void printCard(int y, int x, Card c) {
+        using namespace full_size_cards;
+        switch (c.type) {
+        case 1: {
+            switch (c.suit) {
+            case Suit::Spades: printCard<arrAS>(y, x, c.suit); break;
+            case Suit::Hearts: printCard<arrAH>(y, x, c.suit); break;
+            case Suit::Clubs: printCard<arrAC>(y, x, c.suit); break;
+            case Suit::Diamonds: printCard<arrAD>(y, x, c.suit); break;
+            default:
+                throw std::logic_error(string_format("invalid suit %d", (int)c.suit));
+            }
+        } break;
+        case 2: printCard<arr2>(y, x, c.suit); break;
+        case 3: printCard<arr3>(y, x, c.suit); break;
+        case 4: printCard<arr4>(y, x, c.suit); break;
+        case 5: printCard<arr5>(y, x, c.suit); break;
+        case 6: printCard<arr6>(y, x, c.suit); break;
+        case 7: printCard<arr7>(y, x, c.suit); break;
+        case 8: printCard<arr8>(y, x, c.suit); break;
+        case 9: printCard<arr9>(y, x, c.suit); break;
+        case 10: printCard<arr10>(y, x, c.suit); break;
+        case 11: printCard<arrJ>(y, x, c.suit); break;
+        case 12: printCard<arrQ>(y, x, c.suit); break;
+        case 13: printCard<arrK>(y, x, c.suit); break;
+        default:
+            throw std::logic_error(string_format("invalid type %d", (int)c.type));
+        }
+    }
+    //some sort of statepuke on crash
+    //TODO a moves all the way left and so for d
+    //doube w pres for top row
+    //TODO add undo/redo
+    //TODO you won
+    //TODO auto move
+    void drawCardBack(int y, int x) {
+        drawCardBackImpl(y, x, PAIR_CARD_BACK, "░");
+    }
+    void drawCardEmpty(int y, int x) {
+        drawCardBackImpl(y, x, PAIR_BG, " ");
+    }
+
+    void drawCardBackImpl(int y, int x, short col, const char* filling) {
+        colfill(col, Rect(x, y, cardSize.x, cardSize.y));
+
+        move(y, x);
+        addstr("┌");
+        for (int i = 1; i < cardSize.x-1; ++i)
+            addstr("─");
+        addstr("┐");
+
+        for (int j = 1; j < cardSize.y-1;++j) {
+            move(y+j, x);
+            addstr("│");
+            for (int i = 1; i < cardSize.x-1; ++i) {
+                addstr(filling);//▚ ╬
+            }
+            addstr("│");
+        }
+        move(y+cardSize.y-1, x);
+        addstr("└");
+        for (int i = 1; i < cardSize.x-1; ++i)
+            addstr("─");
+        addstr("┘");
+
+    }
+    void drawCard(int y, int x, Card c) {
+        auto col = c.isRed() ? PAIR_CARD_RED : PAIR_CARD_BLACK;
+        colfill(col, Rect(x, y, cardSize.x, cardSize.y));
+
+        if (smallMode) {
+            std::string suit;
+            switch (c.suit) {
+            case Suit::Spades: suit = "♠"; break;
+            case Suit::Hearts: suit = "♥"; break;
+            case Suit::Clubs: suit = "♣"; break;
+            case Suit::Diamonds: suit = "♦"; break;
+            default:
+                throw std::logic_error(string_format("invalid suit %d", (int)c.suit));
+            }
+            char typeStr[3] = {c.typeChar(), 0, 0 };
+            bool is10 = c.type==10;
+            if (is10) {
+                typeStr[0] = '1';
+                typeStr[1] = '0';
+            }
+            mvprintw(y, x+ is10 + 1, suit.c_str());
+            mvprintw(y, x, typeStr);
+            mvprintw(y+cardSize.y-1, x+cardSize.x - 1 - is10, typeStr);
+            mvprintw(y+cardSize.y-1, x+cardSize.x - 2 - is10, suit.c_str());
+            return;
+        }
+        printCard(y,x,c);
+    }
+    void drawCardOrEmpty(int y, int x, Card c) {
+        if (c.type == 0) drawCardEmpty(y,x);
+        else drawCard(y, x, c);
+    }
+    void drawPile(int y, int x, const Pile& p, int selectedIndex) {
+        auto sz = p.cards.size();
+        drawCardEmpty(y, x);
+        if (sz == 0) {
+            return;
+        }
+        size_t increment = 2 - smallMode;
+        size_t i = 0;
+        size_t lastY = y;
+        for (; i < p.shownPoint; ++i)
+            drawCardBack(lastY++, x);
+        if (selectedIndex >= (int)p.shownPoint) {
+            for (; (int) i < selectedIndex; ++i) {
+                drawCard(lastY, x, p.cards[i]);
+                 lastY += increment;
+            }
+            ++lastY;
+        }
+        for (; i < sz; ++i) {
+            drawCard(lastY, x, p.cards[i]);
+            lastY += increment;
+        }
+    }
+
+    void drawBegin() {
+        colfill(PAIR_BG, Rect(0, 0, Width, Height));
+    }
+
+
+    size_t cardPaddingX = cardSize.x + 3;
+    size_t cardPaddingY = cardSize.y + 1;
+    void drawCursor(Point c, short col, const char* str, const std::array<Pile, 7>& piles, int selectedIndex) {
+        if (c.x == -1) return;
+        setcol(col);
+        if (c.y == -1) {
+            mvaddstr(cardPaddingY / 2, 2 + cardSize.x + cardPaddingX * c.x, str);
+        } else {
+            int shownPoint = piles[c.x].shownPoint;
+            if (c.y < shownPoint)
+                mvaddstr(1+cardPaddingY + c.y, 2 + cardSize.x + cardPaddingX * c.x, str);
+            else {
+                //casting to size_t removes the need to compare selectedIndex with -1 since -1 > any y value
+                mvaddstr(1 + cardPaddingY + shownPoint + (c.y - shownPoint) * (2-smallMode) + ((size_t) selectedIndex <= (size_t) c.y),
+                         2 + cardSize.x + cardPaddingX * c.x, str);
             }
         }
     }
-    void DrawVal(int y, int x, const char* str, int num) {
-        mvprintw(y, x, str);
-        mvprintw(y + 1, x, "  %d", num);
-    }
-
-    void DrawInfo() {
-        setcol(PAIR_TEXT);
-        constexpr int x = MatrixEndX + 3;
-        DrawVal(Height - 4, 1, "Level:", game.Level());
-        DrawVal(Height - 2, 1, "Goal:", game.GoalLines());
-        DrawVal(Height - 7, x, "Highscore:", game.Highscore());
-        DrawVal(Height - 4, x, "Score:", game.Score());
-        DrawVal(Height - 2, x, "Cleared Lines:", game.ClearedLines());
-        if (player.GetHoldPiece() != -1)
-            DrawPiece(2, 2, player.GetHoldPiece());
-        for (int i = 0; i < NextPiecesLen; ++i) {
-            DrawPiece(2 + i * 3, MatrixEndX + 2, randgen.NextPiece(i));
+    void draw(const Game& game, const Player& player) {
+        colfill(PAIR_BG, Rect(0, 0, Width, Height));
+        /*
+          std::array<Pile, 7> piles;
+          //A card with type 0 (default) is considered empty
+          std::array<Card, 4> topPiles;
+          std::vector<Card> stock;
+          // cards from this point on are face up
+          size_t stockIndex = 0;
+         */
+        if ((size_t)game.stockIndex == game.stock.size()-1) {
+            drawCardEmpty(1, 2);
+        } else {
+            drawCardBack(1, 2);
         }
-    }
-    void DrawPiece(int y, int x, Piece p) {
-        colfill(PAIR_BG, Rect(x, y, 8, 3));
-        setcol(p + 1);
+        //TODO: show 3?
+        drawCardOrEmpty(1, 2 + cardPaddingX, game.stockTop());
+
         for (int i = 0; i < 4; ++i) {
-            auto pt = PieceRotations[p][0][i];
-            addblock(3 - pt.y + y, pt.x * 2 + x);
+            //TODO: expand when selected
+            drawCardOrEmpty(1, 2 + cardPaddingX * (i+3), game.topPiles[i]);
         }
-    }
-    inline void DrawBlock(Point pt) {
-        addblock(Height - pt.y - 1, pt.x * 2 + LeftPad + 2);
-    }
-    void DrawPlayer() {
-        setcol(player.GetPieceType() + 1);
-        for (auto pt : player.GetPoints()) {
-            DrawBlock(pt);
+
+        if (player.selected == player.curr) {
+            drawCursor(player.selected, PAIR_CURSOR, "<<", game.piles, player.selected.y);
+        } else {
+            drawCursor(player.selected, PAIR_SELECTED, "<=", game.piles, player.selected.y);
+            drawCursor(player.curr, PAIR_CURSOR, "<", game.piles, player.selected.x == player.curr.x ? player.selected.y : -1);
         }
-    }
 
-    void DrawGhostPiece() {
-        setcol(PAIR_GHOST_PIECE);
-        for (auto pt : player.GetGhostPoints()) {
-            DrawBlock(pt);
+        for (int i = 0; i < 7; ++i) {
+            drawPile(1+ cardPaddingY, 2 + cardPaddingX *i, game.piles[i], player.selected.x == i ? player.selected.y : -1);
         }
+
+        refresh();
     }
 
-public:
-    void Draw() {
-        DrawInfo();
-        DrawMatrix();
-        DrawGhostPiece();
-        DrawPlayer();
-    }
-    inline void DrawPause() {
-        DrawScreenBase("Paused", true);
-    }
+};
 
-    inline void DrawEndScreen() {
-        DrawScreenBase(game.HasHighscore() ?
-                           "HIGH SCORE" :
-                           "GAME OVER",
-                       false);
-    }
-
-private:
-    void DrawScreenBase(std::string title, bool isPause) {
-        addbox(PAIR_BORDER, PAIR_TEXT,
-               Rect(MatrixStartX, 4, Width * 2, 6));
-        setcol(PAIR_TEXT);
-        DrawAtMiddle(5, title);
-        DrawAtMiddle(7, isPause ?
-                            "Quit      Resume" :
-                            "Quit      Replay");
-        DrawAtMiddle(8, "  Q          R  ");
-    }
-
-    inline void DrawAtMiddle(int y, std::string s) {
-        mvaddstr(y, MatrixStartX + Width - (s.size() / 2), s.c_str());
-    }
-} graphics;
-
-int main() {
-    signal(SIGINT, [](int) { game.End(); exit(0); });
-    atexit([] { game.End(); });
-    game.Init([] {
-        graphics.DrawPause();
-        keyChoice('q', [] { exit(0); },
-                  'r', [] { /* don't do anything */ });
-    });
-
+int main(int argc, char**) {
+    Game game;
+    Player player(game);
+    Graphics g(argc > 1);
+    refresh();
     for (;;) {
-        while (game.Running()) {
-            player.Input();
-            player.Gravity();
-            graphics.Draw();
-            waitAFrame();
-        }
-        graphics.DrawEndScreen();
-        keyChoice('q', [] { exit(0); },
-                  'r', [] {
-                      randgen.Restart();
-                      game.Restart();
-                      player.Restart();
-                      graphics.Restart(); });
+        g.draw(game, player);
+        player.input();
     }
+    /*
+    auto v = deck.deal(3);
+    deck.puke();
+    std::cout <<"\nv\n";
+    for(auto& c : v)
+       std::cout << c.toString()<<" ";
+    */
     return 0;
 }
+

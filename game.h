@@ -135,30 +135,53 @@ struct Pile {
         return true;
     }
 };
-
 struct Game {
-    std::array<Pile, 7> piles;
-    //A card with type 0 (default) is considered empty
-    std::array<Card, 4> topPiles;
-    std::vector<Card> stock;
-    // cards from this point on are face up (including this one)
-    int stockIndex = -1;
+    struct State {
+        std::array<Pile, 7> piles;
+        //A card with type 0 (default) is considered empty
+        std::array<Card, 4> topPiles;
+        std::vector<Card> stock;
+        // cards from this point on are face up (including this one)
+        int stockIndex = -1;
+    } curr, prev;
+
 
     Card stockTop() const {
-        if (stockIndex == -1) return Card();
-        return stock[stockIndex];
+        if (curr.stockIndex == -1) return Card();
+        return curr.stock[curr.stockIndex];
     }
     void popStockTop() {
-        if (stockIndex == -1) return;
-        stock.erase(stock.begin() + stockIndex);
-        stockIndex--;
+        if (curr.stockIndex == -1) return;
+        curr.stock.erase(curr.stock.begin() + curr.stockIndex);
+        curr.stockIndex--;
+    }
+    void undo() {
+        std::swap(curr, prev);
+    }
+    void saveUndo(){
+        prev = curr;
+    }
+    bool isWon() const {
+        //it's less work
+        for (auto& t : curr.topPiles) {
+            if (t.type != 13) return false;
+        }
+        return true;
+        /*
+        for (auto& p : curr.piles) {
+            if (p.cards.size() != 0) return false;
+        }
+        return
+        */
     }
 
     Game() {
         Deck deck;
-        for (size_t i = 0; i < piles.size(); ++i)
-            piles[i] = Pile(deck.deal(i+1), i);
-        stock = deck.cards;
+        for (size_t i = 0; i < curr.piles.size(); ++i)
+            curr.piles[i] = Pile(deck.deal(i+1), i);
+        curr.stock = deck.cards;
+
+        prev = curr;
         //piles[0] = Pile({}, 0);
         //piles[1] = Pile({{13, Suit::Clubs}}, 0);
 
@@ -171,9 +194,10 @@ struct Game {
         */
     }
     void incrementStock() {
-        if (stock.size() == 0) return;
-        if (++stockIndex >= (int) stock.size()) {
-            stockIndex = -1;
+        if (curr.stock.size() == 0) return;
+        prev = curr;
+        if (++curr.stockIndex >= (int) curr.stock.size()) {
+            curr.stockIndex = -1;
         }
     }
 

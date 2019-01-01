@@ -19,13 +19,17 @@ using azbyn::Point;
 #include <string>
 #include <iostream>
 #include <algorithm>
+#include <thread>
+#include <functional>
+#include <chrono>
 
+std::function<void()> draw;
 
 struct Player {
     Game& game;
     Point curr = Point(0, -1);
     Point selected = Point(-1, -1);
-
+    
     Player(Game& game) : game(game) {}
 
     void checkVertBounds(int y = 0) {
@@ -33,7 +37,8 @@ struct Player {
             curr.y = -1;
             return;
         }
-        auto& pile = game.piles[curr.x];
+
+        auto& pile = game.curr.piles[curr.x];
         if (curr.y < (int)pile.shownPoint && y < 0) {
             curr.y = -1;
             return;
@@ -57,6 +62,127 @@ struct Player {
         curr.y += y;
         checkVertBounds(y);
     }
+    //assumes something is selected
+    bool selAutoMove() {
+        Card c = getSingleCard();
+        if (c.type != 0) {
+            int i = 0;
+            for (auto& topPile : game.curr.topPiles) {
+                if (c.type == topPile.type+1 && (c.type == 1 || c.suit == topPile.suit)) {
+                    popSingleCard();
+                    topPile = c;
+                    curr.y = -1;
+                    curr.x = 3 + i;
+                    deselect();
+                    return true;
+                }
+                ++i;
+            }
+            i = 0;
+            for (auto& pile : game.curr.piles) {
+                auto state = game.curr;
+                if (pile.cards.size() == 0 && selected.y == 0) {
+                    //don't be a debil and move king constantly
+                    continue;
+                }
+                if (pile.append(c)) {
+                    popSingleCard();
+                    game.prev = state;
+                    curr.x = i;
+                    moveVert(25);
+                    deselect();
+                    return true;
+                }
+                ++i;
+            }
+        } else if (selected.y == -1) {//must be fundation
+            auto& topPile = game.curr.topPiles[selected.x - 3];
+            int i = 0;
+            for (auto& pile : game.curr.piles) {
+                auto state = game.curr;
+                if (pile.append(topPile)) {
+                    --topPile.type;
+                    game.prev = state;
+                    curr.x = i;
+                    moveVert(25);
+                    deselect();
+                    return true;
+                }
+                ++i;
+            }
+
+        } else {
+            auto& selectedPile = game.curr.piles[selected.x];
+            auto end = selectedPile.end();
+            auto sel = selectedPile.begin() + selected.y;
+            auto state = game.curr;
+            for (int i = 0; i < 7; ++i) {
+                if (i == selected.x) continue;
+                auto& pile = game.curr.piles[i];
+                if (pile.cards.size() == 0 && selected.y == 0) {
+                    //don't be a debil and move king constantly
+                    continue;
+                }
+                if (pile.append(sel, end)) {
+                    game.prev = state;
+                    selectedPile.erase(sel, end);
+                    curr.x = i;
+                    moveVert(25);
+                    deselect();
+                    return true;
+                }
+            }
+        }
+        deselect();
+        return false;
+    }
+    bool autoMove() {
+        for (int i = 0; i < 7; ++i) {
+            auto& selectedPile = game.curr.piles[i];
+            auto sz = selectedPile.cards.size();
+            if (sz == 0) continue;
+            selected.x = i;
+            selected.y = selectedPile.shownPoint;
+            if (selAutoMove()) return true;
+        }
+        for (int i = 0; i < 7; ++i) {
+            auto& selectedPile = game.curr.piles[i];
+            auto sz = selectedPile.cards.size();
+            if (sz == 0) continue;
+            selected.x = i;
+            selected.y = sz - 1;
+            moveVert(25);
+            auto c = selectedPile.cards.back();
+            for (int j = 0; j < 4; ++j) {
+                auto& topPile = game.curr.topPiles[j];
+                if (c.type == topPile.type+1 && (c.type == 1 || c.suit == topPile.suit)) {
+                    popSingleCard();
+                    topPile = c;
+                    curr.y = -1;
+                    curr.x = 3 + j;
+                    deselect();
+                    return true;
+                }
+            }
+        }
+
+        selected = Point(1, -1);//waste
+        if (selAutoMove()) return true;
+
+        game.incrementStock();
+        curr = Point(0, -1); //stock
+        deselect();
+        return false;
+    }
+
+    void allAutoMoves() {
+        auto state = game.curr;
+        while(autoMove()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            draw();
+        }
+        game.prev = state;
+    }
 
     void deselect() {
         selected = Point(-1, -1);
@@ -72,17 +198,19 @@ struct Player {
             return Card();
         }
         else {
-            auto& pileCards = game.piles[selected.x].cards;
+            auto& pileCards = game.curr.piles[selected.x].cards;
             if (pileCards.size() - selected.y == 1) return pileCards.back();
             return Card();
         }
     }
     void popSingleCard() {
         if (selected.y == -1 && selected.x == 1) { // stockShown
+            game.saveUndo();
             game.popStockTop();
         }
         else {
-            game.piles[selected.x].popBack();
+            game.saveUndo();
+            game.curr.piles[selected.x].popBack();
         }
     }
     void action() {
@@ -97,22 +225,23 @@ struct Player {
                         selected = curr;
                 }
                 else if (x >= 3) {
-                    auto& topPile = game.topPiles[curr.x - 3];
+                    auto& topPile = game.curr.topPiles[curr.x - 3];
                     if (topPile.type != 0) selected = curr;
                 }
             } else {
                 if (x >= 3) {
-                    auto& topPile = game.topPiles[curr.x - 3];
+                    auto& topPile = game.curr.topPiles[curr.x - 3];
                     auto card = getSingleCard();
                     if (card.type == topPile.type+1 && (card.type == 1 || card.suit == topPile.suit)) {
                         popSingleCard();
                         topPile = card;
                     } else return;
-                }
+                } else if (x == 2) return;
+
                 deselect();
             }
         } else {
-            auto& pile = game.piles[x];
+            auto& pile = game.curr.piles[x];
             if (selected.x == -1) {
                 if (pile.cards.size() != 0)
                     selected = curr;
@@ -121,13 +250,19 @@ struct Player {
                 if (selected.y == -1) {
                     if (selected.x == 1) {// waste
                         auto card = game.stockTop();
-                        if (pile.append(card))
+                        auto state = game.curr;
+                        if (pile.append(card)) {
                             game.popStockTop();
-                        else return;
+                            game.prev = state;
+                        }
+                       else return;
                     } else { //must be fundation
-                        auto& topPile = game.topPiles[selected.x-3];
-                        if (pile.append(topPile))
+                        auto& topPile = game.curr.topPiles[selected.x-3];
+                        auto state = game.curr;
+                        if (pile.append(topPile)) {
+                            game.prev = state;
                             --topPile.type;
+                        }
                         else return;
                     }
                 } else {
@@ -136,12 +271,14 @@ struct Player {
                         else selected = curr;
                         return;
                     }
-                    auto& selectedPile = game.piles[selected.x];
+                    auto& selectedPile = game.curr.piles[selected.x];
                     auto end = selectedPile.end();
                     auto sel = selectedPile.begin() + selected.y;
-
-                    if (pile.append(sel, end))
+                    auto state = game.curr;
+                    if (pile.append(sel, end)) {
+                        game.prev = state;
                         selectedPile.erase(sel, end);
+                    }
                     else return;
                 }
                 deselect();
@@ -150,22 +287,57 @@ struct Player {
     }
 
     void input() {
-        switch (tolower(getch())) {
+        switch (getch()) {
         case ' ':
             action();
+            break;
+        case 'e':
+            if (selected.x != -1)
+                selAutoMove();
+            break;
+        case 'f':
+            autoMove();
+            break;
+        case 'F':
+            allAutoMoves();
             break;
         case 'c':
             deselect();
             break;
+        case 'u':
+        case 'z':
+            game.undo();
+            checkVertBounds();
+            break;
         case 's':
-            moveVert(15);//a big number so it moves to the bottom
+            moveVert(25);//a big number so it moves to the bottom
             break;
-        case 'w':
-            moveVert(-15);//a big number so it moves to the top
-            moveVert(1);
+        case 'a':
+            moveHor(-6);//a big number so it moves to the left
             break;
-        case 'q':
+        case 'd':
+            moveHor(6);//a big number so it moves to the right
+            break;
+        case 'w': {
+            if (curr.y <= 0) {
+                //throw 1;
+                //moveVert(-15);//a big number so it moves to the top
+                curr.y = -1;
+            } else {
+                auto& pile = game.curr.piles[curr.x];
+                if (curr.y == (int)pile.shownPoint) {
+                    curr.y = -1;
+                } else {
+                    curr.y = -1;
+                    moveVert(1);
+                }
+            }
+        } break;
+            //case 27:
+        case 'p':
+            //if (tolower(getch()) != 'q') return;
             endwin();
+            std::cout << "exited normally\n";
             exit(0);
             break;
         case KEY_UP:
@@ -210,6 +382,7 @@ struct Graphics {
 
     constexpr static int Width = 100;
     constexpr static int Height = 40;
+    int leftPad = 0;
 
 
     bool smallMode;
@@ -231,7 +404,6 @@ struct Graphics {
                 }*/
         if (has_colors())
             initColors();
-        drawBegin();
     }
     ~Graphics() {
         endwin();
@@ -301,12 +473,9 @@ struct Graphics {
             throw std::logic_error(string_format("invalid type %d", (int)c.type));
         }
     }
-    //some sort of statepuke on crash
-    //TODO a moves all the way left and so for d
-    //doube w pres for top row
-    //TODO add undo/redo
-    //TODO you won
-    //TODO auto move
+    //TODO better you won
+    //TODO some sort of menu?
+
     void drawCardBack(int y, int x) {
         drawCardBackImpl(y, x, PAIR_CARD_BACK, "░");
     }
@@ -394,31 +563,29 @@ struct Graphics {
         }
     }
 
-    void drawBegin() {
-        colfill(PAIR_BG, Rect(0, 0, Width, Height));
-    }
-
-
     size_t cardPaddingX = cardSize.x + 3;
     size_t cardPaddingY = cardSize.y + 1;
     void drawCursor(Point c, short col, const char* str, const std::array<Pile, 7>& piles, int selectedIndex) {
         if (c.x == -1) return;
         setcol(col);
         if (c.y == -1) {
-            mvaddstr(cardPaddingY / 2, 2 + cardSize.x + cardPaddingX * c.x, str);
+            mvaddstr(cardPaddingY / 2, leftPad+ 2 + cardSize.x + cardPaddingX * c.x, str);
         } else {
             int shownPoint = piles[c.x].shownPoint;
             if (c.y < shownPoint)
-                mvaddstr(1+cardPaddingY + c.y, 2 + cardSize.x + cardPaddingX * c.x, str);
+                mvaddstr(1+cardPaddingY + c.y, leftPad+ 2 + cardSize.x + cardPaddingX * c.x, str);
             else {
                 //casting to size_t removes the need to compare selectedIndex with -1 since -1 > any y value
                 mvaddstr(1 + cardPaddingY + shownPoint + (c.y - shownPoint) * (2-smallMode) + ((size_t) selectedIndex <= (size_t) c.y),
-                         2 + cardSize.x + cardPaddingX * c.x, str);
+                         2 + cardSize.x + cardPaddingX * c.x + leftPad, str);
             }
         }
     }
     void draw(const Game& game, const Player& player) {
-        colfill(PAIR_BG, Rect(0, 0, Width, Height));
+        colfill(PAIR_BG, Rect(0, 0, COLS, LINES));
+        
+        leftPad = (COLS - Width) / 2;
+        if (leftPad < 0) leftPad = 0;
         /*
           std::array<Pile, 7> piles;
           //A card with type 0 (default) is considered empty
@@ -427,51 +594,47 @@ struct Graphics {
           // cards from this point on are face up
           size_t stockIndex = 0;
          */
-        if ((size_t)game.stockIndex == game.stock.size()-1) {
-            drawCardEmpty(1, 2);
+        if ((size_t)game.curr.stockIndex == game.curr.stock.size()-1) {
+            drawCardEmpty(1, 2+leftPad);
         } else {
-            drawCardBack(1, 2);
+            drawCardBack(1, 2+leftPad);
         }
         //TODO: show 3?
-        drawCardOrEmpty(1, 2 + cardPaddingX, game.stockTop());
+        drawCardOrEmpty(1, 2 + cardPaddingX +leftPad, game.stockTop());
 
         for (int i = 0; i < 4; ++i) {
-            //TODO: expand when selected
-            drawCardOrEmpty(1, 2 + cardPaddingX * (i+3), game.topPiles[i]);
+            drawCardOrEmpty(1, 2 + cardPaddingX * (i+3) +leftPad, game.curr.topPiles[i]);
         }
 
         if (player.selected == player.curr) {
-            drawCursor(player.selected, PAIR_CURSOR, "<<", game.piles, player.selected.y);
+            drawCursor(player.selected, PAIR_CURSOR, "<<", game.curr.piles, player.selected.y);
         } else {
-            drawCursor(player.selected, PAIR_SELECTED, "<=", game.piles, player.selected.y);
-            drawCursor(player.curr, PAIR_CURSOR, "<", game.piles, player.selected.x == player.curr.x ? player.selected.y : -1);
+            drawCursor(player.selected, PAIR_SELECTED, "<=", game.curr.piles, player.selected.y);
+            drawCursor(player.curr, PAIR_CURSOR, "<", game.curr.piles, player.selected.x == player.curr.x ? player.selected.y : -1);
         }
 
         for (int i = 0; i < 7; ++i) {
-            drawPile(1+ cardPaddingY, 2 + cardPaddingX *i, game.piles[i], player.selected.x == i ? player.selected.y : -1);
+            drawPile(1+ cardPaddingY, 2 + cardPaddingX *i + leftPad, game.curr.piles[i], player.selected.x == i ? player.selected.y : -1);
         }
 
         refresh();
     }
-
 };
 
 int main(int argc, char**) {
-    Game game;
-    Player player(game);
-    Graphics g(argc > 1);
-    refresh();
-    for (;;) {
-        g.draw(game, player);
-        player.input();
+    {
+        Game game;
+        Graphics g(argc > 1);
+        Player player(game);
+        draw = [&](){ g.draw(game, player); };
+        refresh();
+        while (!game.isWon()) {
+            g.draw(game, player);
+            player.input();
+        }
     }
-    /*
-    auto v = deck.deal(3);
-    deck.puke();
-    std::cout <<"\nv\n";
-    for(auto& c : v)
-       std::cout << c.toString()<<" ";
-    */
+    std::cout << "YOU WON!! (Better message is WIP) \n";
+
     return 0;
 }
 
